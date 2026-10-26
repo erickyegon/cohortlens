@@ -159,3 +159,48 @@ def test_sex_filter_uses_the_person_table_only(truth_engine, sex):
     result = persons(truth_engine, "demographics", demographics={"sex": sex})
     female = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23}
     assert set(result) == (female if sex == ["F"] else ALL_LISINOPRIL - female)
+
+
+# ---- review round 1 on PR #35 ---------------------------------------------------------------------------------
+
+def test_age_is_per_index_row_when_a_person_has_several_index_events(truth_engine):
+    # P19 (born 1960-05-05) has lisinopril on 2019-03-01 (age 58) and 2021-03-01 (age 60)
+    def p19(demographics):
+        result = rows(truth_engine, "demographics", index={"first_occurrence_only": False}, demographics=demographics)
+        return sorted(d for p, d in result if p == 19)
+
+    assert p19({"age_min": 60}) == [dt.date(2021, 3, 1)]
+    assert p19({"age_min": 58, "age_max": 58}) == [dt.date(2019, 3, 1)]
+    assert p19({"age_min": 59, "age_max": 59}) == []
+
+
+def test_a_person_with_unknown_gender_never_matches_even_with_the_default_sex_list(truth_engine):
+    insert_person = text("insert into cdm.person (person_id, gender_concept_id, year_of_birth, race_concept_id,"
+                         " ethnicity_concept_id) values (901, 0, 1960, 0, 0)")
+    insert_drug = text("insert into cdm.drug_exposure (drug_exposure_id, person_id, drug_concept_id,"
+                       " drug_exposure_start_date, drug_exposure_end_date, drug_type_concept_id)"
+                       " values (901, 901, 19080128, '2020-06-01', '2020-06-01', 32818)")
+    plan = build_plan(definition())
+    with truth_engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            conn.execute(insert_person)
+            conn.execute(insert_drug)
+            assert 901 in [r[0] for r in conn.execute(plan.rows("index")).fetchall()]
+            assert 901 not in [r[0] for r in conn.execute(plan.rows("demographics")).fetchall()]
+        finally:
+            trans.rollback()
+
+
+def test_without_descendants_a_clinical_drug_id_matches_exactly_that_concept(truth_engine):
+    # 19080128 is 'lisinopril 10 MG Oral Tablet'; P2 has the 20 mg tablet and P3 the combination product
+    only_10mg = persons(truth_engine, "index", index={"concept_ids": [19080128], "include_descendants": False})
+    assert only_10mg == sorted(ALL_LISINOPRIL - {2, 3})
+
+
+def test_several_concepts_are_combined_and_descendants_do_not_duplicate_rows(truth_engine):
+    both = {"concept_ids": [LISINOPRIL, 1341927]}  # lisinopril and enalapril ingredients
+    result = rows(truth_engine, "index", index=both)
+    assert sorted(p for p, _ in result) == list(range(1, 24))  # everyone: P4 only has enalapril
+    assert len(result) == 23  # still one row per person
+    assert dict(result)[8] == dt.date(2020, 2, 21)  # P8's enalapril precedes the lisinopril: earliest of both

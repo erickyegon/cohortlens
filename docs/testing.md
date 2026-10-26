@@ -52,7 +52,7 @@ Criterion types and the patients that cover them:
 | Age boundary (birthday on / one day after index) | P17, P18 |
 | Death after index does not remove a patient | P20 |
 
-Known gaps (not covered by the fixture): the seed vocabulary has no hypertension child concept (P2 uses one the fixture adds by hand); NULL month or day of birth (the oracle would count the person one year older; the seed always populates them) and ACE washout through an ingredient-level concept (no ancestor row from the class to the ingredient in the trimmed vocabulary; clinical drugs are what appear in exposures).
+Known gaps (not covered by the fixture's own patients): the seed vocabulary has no hypertension child concept (P2 uses one the fixture adds by hand); NULL month or day of birth (the oracle would count the person one year older; the seed always populates them) and ACE washout through an ingredient-level concept (no ancestor row from the class to the ingredient in the trimmed vocabulary; clinical drugs are what appear in exposures).
 
 Schema drift guard: `test_fixture_columns_match_the_etl_output_columns` compares the fixture's `cdm` columns with the columns the ETL writes into the seed.
 

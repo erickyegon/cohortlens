@@ -41,6 +41,12 @@ Conventions:
 Details:
 - **Sex** is always an explicit filter on the OMOP gender concepts (8532 female, 8507 male); a person with another or unknown gender never matches, even with the default `["F", "M"]`.
 - **Age** is `year(index) - year_of_birth`, minus one if the birthday has not been reached; a missing month or day of birth is replaced by July 1.
+- **Counting rule for #8**: step rows are `(person_id, index_date)`; with `first_occurrence_only: false` a person can have several rows, so every count must be `COUNT(DISTINCT person_id)`. The steps are shareable CTEs, so one statement can return the count of every step without recomputing earlier ones.
+- **`plan.rows()` returns person-level rows and is internal only.** The API must expose counts, never these rows (FR-11, NFR-3).
+- **Executing a plan** is the caller's job and must use the read-only `cohortlens_reader` connection with its 10-second statement timeout (FR-14); the compiler itself is execution-agnostic.
+- **`concept_ancestor` must contain self-rows** (each concept is its own ancestor at distance 0, as in OMOP); otherwise `include_descendants` on a leaf concept would match nothing. The seed and the truth fixture both have them.
+- **Known difference from the SQL oracle**: for a person with a missing birth month or day the engine assumes July 1 while `data/etl/example_cohort.sql` does not handle NULL there. The seed and fixture always populate both, so the two agree on the demo data.
+- Step keys are what the code uses (`index`, `demographics`; rule steps will be positional, `rule_1`...); labels are display text only and never go into SQL.
 - Later issues add the observation window (#7), rules with windows (#7) and the counting query (#8) as further steps in the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
 
 

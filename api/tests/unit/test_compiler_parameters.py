@@ -2,6 +2,7 @@
 
 No database needed: the statements are compiled with the PostgreSQL dialect and inspected.
 """
+import ast
 import pathlib
 import re
 
@@ -51,6 +52,7 @@ def test_demographic_values_are_parameters_too():
 
 
 def test_user_text_never_reaches_the_sql():
+    # regression guard: the compiler must keep ignoring the definition's name and (later) rule labels
     plan = build_plan(definition())
     for key in ("index", "demographics"):
         sql, params = compiled(plan, key)
@@ -73,6 +75,14 @@ def test_steps_are_ordered_and_labelled():
 
 
 def test_compiler_source_has_no_escape_hatches_for_raw_sql():
-    source = COMPILER.read_text(encoding="utf-8")
-    for forbidden in ("literal_binds", "text(", "exec_driver_sql", ".format("):
-        assert forbidden not in source, forbidden
+    """AST check (not a substring scan): no text()/literal_column(), no string formatting, no f-strings."""
+    tree = ast.parse(COMPILER.read_text(encoding="utf-8"))
+    banned_names = {"text", "literal_column", "literal", "exec_driver_sql"}
+    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    attrs = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+    imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+    assert not (banned_names & (names | attrs | imported)), banned_names & (names | attrs | imported)
+    assert "literal_binds" not in names | attrs and "format" not in attrs
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr)], "f-strings are not allowed in the compiler"
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod)
+                and isinstance(n.left, ast.Constant) and isinstance(n.left.value, str)], "no %-formatting"
