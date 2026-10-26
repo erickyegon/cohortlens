@@ -1,0 +1,22 @@
+{
+  "name": "New users of lisinopril with hypertension, aged 50+, no prior heart failure",
+  "index_event": {
+    "domain": "drug",
+    "concept_ids": [1308216],
+    "include_descendants": true,
+    "first_occurrence_only": true
+  },
+  "demographics": {"age_min": 50, "sex": ["F", "M"]},
+  "observation": {"prior_days": 365, "post_days": 0},
+  "rules": [
+    {"label": "No ACE inhibitor in the prior 365 days", "type": "exclude", "domain": "drug",
+     "concept_ids": [21601784], "include_descendants": true,
+     "window": {"start_days": -365, "end_days": -1}},
+    {"label": "Essential hypertension on or before index", "type": "include", "domain": "condition",
+     "concept_ids": [320128], "include_descendants": true,
+     "window": {"start_days": -36500, "end_days": 0}},
+    {"label": "No prior heart failure", "type": "exclude", "domain": "condition",
+     "concept_ids": [316139], "include_descendants": true,
+     "window": {"start_days": -36500, "end_days": -1}}
+  ]
+}
