@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import CTE, Select, and_, case, extract, func, or_, select
+from sqlalchemy import CTE, Select, and_, case, exists, extract, func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.cohort_engine.models import CohortDefinition, Demographics, IndexEvent
-from app.cohort_engine.schema import DOMAINS, GENDER_CONCEPT, concept_ancestor, person
+from app.cohort_engine.models import CohortDefinition, Demographics, IndexEvent, Observation, Rule
+from app.cohort_engine.schema import DOMAINS, GENDER_CONCEPT, concept_ancestor, observation_period, person
 
 # Assumed birthday when a person has no month or day of birth recorded (the OHDSI convention for missing parts).
 DEFAULT_BIRTH_MONTH = 7
@@ -100,10 +100,51 @@ def demographics(previous: CTE, demo: Demographics) -> CTE:
     return kept.cte("demographics")
 
 
+def observation_window(previous: CTE, obs: Observation) -> CTE:
+    """Keep index rows covered by ONE observation period that starts at least `prior_days` before the index date
+    and ends at least `post_days` after it. With 0/0 the index date merely has to fall inside an observation period.
+    """
+    covering = exists().where(
+        observation_period.c.person_id == previous.c.person_id,
+        observation_period.c.observation_period_start_date <= previous.c.index_date - obs.prior_days,
+        observation_period.c.observation_period_end_date >= previous.c.index_date + obs.post_days,
+    )
+    kept = select(previous.c.person_id, previous.c.index_date).where(covering)
+    return kept.cte("observation")
+
+
+def rule_step(previous: CTE, rule: Rule, name: str) -> CTE:
+    """Keep (`include`) or drop (`exclude`) index rows that have at least `min_occurrences` records of the rule's
+    concepts with a date in `[index_date + start_days, index_date + end_days]` (inclusive, evaluated per index row).
+    """
+    table, concept_column, date_column = DOMAINS[rule.domain]
+    in_window = and_(
+        table.c.person_id == previous.c.person_id,
+        concept_filter(concept_column, rule.concept_ids, rule.include_descendants),
+        date_column >= previous.c.index_date + rule.window.start_days,
+        date_column <= previous.c.index_date + rule.window.end_days,
+    )
+    if rule.min_occurrences == 1:
+        matches: ColumnElement = exists().where(in_window)
+    else:
+        matches = select(func.count()).select_from(table).where(in_window).scalar_subquery() >= rule.min_occurrences
+    kept = select(previous.c.person_id, previous.c.index_date).where(matches if rule.type == "include" else ~matches)
+    return kept.cte(name)
+
+
 def build_plan(definition: CohortDefinition) -> CohortPlan:
+    """Chain: index -> demographics -> observation -> one step per rule, in the order the definition lists them."""
     index = index_events(definition.index_event)
-    kept = demographics(index, definition.demographics)
-    return CohortPlan(steps=(
+    demo = demographics(index, definition.demographics)
+    obs = observation_window(demo, definition.observation)
+    steps = [
         Step("index", "First index event" if definition.index_event.first_occurrence_only else "Index events", index),
-        Step("demographics", "Age and sex", kept),
-    ))
+        Step("demographics", "Age and sex", demo),
+        Step("observation", "Observation window", obs),
+    ]
+    previous = obs
+    for position, rule in enumerate(definition.rules, start=1):
+        key = "rule_" + str(position)
+        previous = rule_step(previous, rule, key)
+        steps.append(Step(key, rule.label, previous))  # the label is display text; it is never put into SQL
+    return CohortPlan(steps=tuple(steps))

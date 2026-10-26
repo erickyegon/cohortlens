@@ -61,16 +61,16 @@ def test_user_text_never_reaches_the_sql():
 
 def test_only_cdm_tables_are_read():
     sql, _ = compiled(build_plan(definition()), "demographics")
-    qualified = set(re.findall(r"cdm\.(\w+)", sql))
+    qualified = set(re.findall(r"\bcdm\.(\w+)", sql))
     assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor"}, qualified
     # every dotted name is either in schema cdm or one of our own CTEs: nothing from another schema
-    prefixes = set(re.findall(r"([a-z_]+)\.[a-z_]+", sql))
+    prefixes = set(re.findall(r"\b([a-z_]+)\.[a-z_]+", sql))
     assert prefixes <= {"cdm", "index_events", "demographics"}, prefixes
 
 
 def test_steps_are_ordered_and_labelled():
     plan = build_plan(definition())
-    assert [s.key for s in plan.steps] == ["index", "demographics"]
+    assert [s.key for s in plan.steps] == ["index", "demographics", "observation"]
     assert all(s.label for s in plan.steps)
 
 
@@ -115,7 +115,7 @@ def test_steps_include_observation_and_one_keyed_step_per_rule_in_order():
 @pytest.mark.parametrize("key", ["observation", "rule_1", "rule_2"])
 def test_observation_and_rule_values_are_bound_parameters(key):
     sql, params = compiled(build_plan(rules_definition()), key)
-    stripped = re.sub(r"cdm\.\w+", "", sql)
+    stripped = re.sub(r"\bcdm\.\w+", "", sql)
     for literal in ("21601784", "320128", "1308216", "365", "36500"):
         assert literal not in stripped, literal
     values = repr(list(params.values()))
@@ -131,8 +131,8 @@ def test_rule_labels_and_names_never_reach_the_sql_or_its_parameters():
 
 def test_all_tables_read_by_rule_steps_are_cdm_tables():
     sql, _ = compiled(build_plan(rules_definition()), "rule_2")
-    qualified = set(re.findall(r"cdm\.(\w+)", sql))
+    qualified = set(re.findall(r"\bcdm\.(\w+)", sql))
     assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor", "observation_period"}
     assert {"observation_period", "condition_occurrence"} <= qualified
-    prefixes = set(re.findall(r"([a-z_]+)\.[a-z_]+", sql))
+    prefixes = set(re.findall(r"\b([a-z_]+)\.[a-z_]+", sql))
     assert prefixes <= {"cdm", "index_events", "demographics", "observation", "rule_1", "rule_2"}, prefixes

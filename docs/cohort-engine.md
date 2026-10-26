@@ -37,6 +37,8 @@ Conventions:
 |---|---|
 | `index` | Events of the index domain whose concept matches (expanded through `concept_ancestor` when `include_descendants`), inside `date_range`, then one earliest event per person when `first_occurrence_only` (otherwise every distinct event date) |
 | `demographics` | Index rows whose person is in the requested sex list and whose age **at that row's index date** is within `age_min`..`age_max` |
+| `observation` | Index rows covered by **one** observation period that starts at least `prior_days` before the index date and ends at least `post_days` after it. Always present: with the default 0/0 the index date merely has to fall inside an observation period (a person whose observation ended the day before is dropped). A gap between periods does not count as observed time |
+| `rule_1` … `rule_N` | One step per rule, in list order. A rule counts the person's records of the rule's concepts (descendants expanded when asked) dated within `[index_date + start_days, index_date + end_days]`, inclusive; `include` keeps rows with at least `min_occurrences` such records, `exclude` drops them. Evaluated separately for each index row |
 
 Details:
 - **Sex** is always an explicit filter on the OMOP gender concepts (8532 female, 8507 male); a person with another or unknown gender never matches, even with the default `["F", "M"]`.
@@ -47,7 +49,8 @@ Details:
 - **`concept_ancestor` must contain self-rows** (each concept is its own ancestor at distance 0, as in OMOP); otherwise `include_descendants` on a leaf concept would match nothing. The seed and the truth fixture both have them.
 - **Known difference from the SQL oracle**: for a person with a missing birth month or day the engine assumes July 1 while `data/etl/example_cohort.sql` does not handle NULL there. The seed and fixture always populate both, so the two agree on the demo data.
 - Step keys are what the code uses (`index`, `demographics`; rule steps will be positional, `rule_1`...); labels are display text only and never go into SQL.
-- Later issues add the observation window (#7), rules with windows (#7) and the counting query (#8) as further steps in the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
+- **Occurrences** are records, not days: two exposures on the same day count as two. With `min_occurrences: 1` the rule is an `EXISTS` (uses the `(concept, person, date)` indexes); with more it is a correlated count.
+- Later issues add the counting query (#8) and the baseline (#10) on top of the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
 
 
 ## Worked examples
