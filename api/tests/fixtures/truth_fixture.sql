@@ -125,7 +125,7 @@ INSERT INTO cdm.observation_period VALUES (7, 7, '2019-06-03', '2023-12-31', 328
 INSERT INTO cdm.visit_occurrence VALUES (7, 7, 9202, '2020-06-01', '2020-06-01', 32817, 'ambulatory');
 INSERT INTO cdm.drug_exposure VALUES (7, 7, 19080128, '2020-06-01', '2020-06-01', 32818, 30, 7, NULL);
 INSERT INTO cdm.condition_occurrence VALUES (7, 7, 320128, '2019-07-01', NULL, 32020, 7, NULL);
--- P8: out at washout: enalapril 100 days before index
+-- P8: out at washout: enalapril 101 days before index
 INSERT INTO cdm.person VALUES (8, 8507, 1960, 5, 5, '1960-05-05 00:00:00', 0, 38003564, 'P8', 'M', 'white', 'nonhispanic');
 INSERT INTO cdm.observation_period VALUES (8, 8, '2015-01-01', '2023-12-31', 32817);
 INSERT INTO cdm.visit_occurrence VALUES (8, 8, 9202, '2020-06-01', '2020-06-01', 32817, 'ambulatory');
@@ -210,3 +210,23 @@ INSERT INTO cdm.visit_occurrence VALUES (20, 20, 9202, '2020-06-01', '2020-06-01
 INSERT INTO cdm.drug_exposure VALUES (24, 20, 19080128, '2020-06-01', '2020-06-01', 32818, 30, 20, NULL);
 INSERT INTO cdm.condition_occurrence VALUES (22, 20, 320128, '2018-03-01', NULL, 32020, 20, NULL);
 INSERT INTO cdm.death VALUES (20, '2022-02-01', 32817);
+-- P21: in cohort: heart failure on the index date is not 'before' index (strict <)
+INSERT INTO cdm.person VALUES (21, 8532, 1960, 5, 5, '1960-05-05 00:00:00', 0, 38003564, 'P21', 'F', 'white', 'nonhispanic');
+INSERT INTO cdm.observation_period VALUES (21, 21, '2015-01-01', '2023-12-31', 32817);
+INSERT INTO cdm.visit_occurrence VALUES (21, 21, 9202, '2020-06-01', '2020-06-01', 32817, 'ambulatory');
+INSERT INTO cdm.drug_exposure VALUES (25, 21, 19080128, '2020-06-01', '2020-06-01', 32818, 30, 21, NULL);
+INSERT INTO cdm.condition_occurrence VALUES (23, 21, 320128, '2018-03-01', NULL, 32020, 21, NULL);
+INSERT INTO cdm.condition_occurrence VALUES (24, 21, 316139, '2020-06-01', NULL, 32020, 21, NULL);
+-- P22: out at observation: observation ends the day before index
+INSERT INTO cdm.person VALUES (22, 8507, 1960, 5, 5, '1960-05-05 00:00:00', 0, 38003564, 'P22', 'M', 'white', 'nonhispanic');
+INSERT INTO cdm.observation_period VALUES (22, 22, '2015-01-01', '2020-05-31', 32817);
+INSERT INTO cdm.visit_occurrence VALUES (22, 22, 9202, '2020-06-01', '2020-06-01', 32817, 'ambulatory');
+INSERT INTO cdm.drug_exposure VALUES (26, 22, 19080128, '2020-06-01', '2020-06-01', 32818, 30, 22, NULL);
+INSERT INTO cdm.condition_occurrence VALUES (25, 22, 320128, '2018-03-01', NULL, 32020, 22, NULL);
+-- P23: out at observation: gap between two observation periods, the one containing index is only 102 days old
+INSERT INTO cdm.person VALUES (23, 8532, 1960, 5, 5, '1960-05-05 00:00:00', 0, 38003564, 'P23', 'F', 'white', 'nonhispanic');
+INSERT INTO cdm.observation_period VALUES (23, 23, '2015-01-01', '2019-12-31', 32817);
+INSERT INTO cdm.observation_period VALUES (24, 23, '2020-02-20', '2023-12-31', 32817);
+INSERT INTO cdm.visit_occurrence VALUES (23, 23, 9202, '2020-06-01', '2020-06-01', 32817, 'ambulatory');
+INSERT INTO cdm.drug_exposure VALUES (27, 23, 19080128, '2020-06-01', '2020-06-01', 32818, 30, 23, NULL);
+INSERT INTO cdm.condition_occurrence VALUES (26, 23, 320128, '2018-03-01', NULL, 32020, 23, NULL);

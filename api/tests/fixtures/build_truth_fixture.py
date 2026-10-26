@@ -5,7 +5,8 @@
 Every patient exists to exercise exactly one criterion or boundary of the reference cohort
 (docs/spec.md section 7). Expected counts are written down independently in EXPECTED below and in
 docs/testing.md, then asserted against the SQL oracle (data/etl/example_cohort.sql) by the tests.
-Concept ids are real OMOP concept ids; the concept/ancestor rows are a hand-picked subset.
+Concept ids follow OMOP naming and most match the seed vocabulary; ids for combination and clinical drugs
+(e.g. 974200) are placeholders, and the concept/ancestor rows are a hand-picked subset.
 """
 import pathlib
 
@@ -46,6 +47,7 @@ IDX = "2020-06-01"
 OBS_END = "2023-12-31"
 
 # id: (sex, birth, obs_start, obs_end, [(drug_concept, date)], [(condition_concept, date)], death, note)
+# obs_start may be a list of (start, end) tuples for patients with several observation periods (obs_end is then ignored).
 P = {
     1: ("F", "1960-05-05", "2015-01-01", OBS_END, [(LIS10, IDX)], [(HTN, "2018-03-01")], None, "in cohort: baseline passer"),
     2: ("M", "1955-01-10", "2015-01-01", OBS_END, [(LIS20, IDX)], [(HTN_CHILD, "2017-03-01")], None, "in cohort: hypertension via descendant concept; lisinopril 20 mg"),
@@ -54,7 +56,7 @@ P = {
     5: ("F", "1960-05-05", "2020-02-10", OBS_END, [(LIS10, IDX)], [(HTN, "2020-03-01")], None, "out at observation: 112 days of prior observation"),
     6: ("M", "1960-05-05", "2019-06-02", OBS_END, [(LIS10, IDX)], [(HTN, "2019-07-01")], None, "in cohort: observation exactly 365 days before index (inclusive)"),
     7: ("F", "1960-05-05", "2019-06-03", OBS_END, [(LIS10, IDX)], [(HTN, "2019-07-01")], None, "out at observation: 364 days of prior observation"),
-    8: ("M", "1960-05-05", "2015-01-01", OBS_END, [(ENAL, "2020-02-21"), (LIS10, IDX)], [(HTN, "2018-03-01")], None, "out at washout: enalapril 100 days before index"),
+    8: ("M", "1960-05-05", "2015-01-01", OBS_END, [(ENAL, "2020-02-21"), (LIS10, IDX)], [(HTN, "2018-03-01")], None, "out at washout: enalapril 101 days before index"),
     9: ("F", "1960-05-05", "2015-01-01", OBS_END, [(ENAL, "2019-04-27"), (LIS10, IDX)], [(HTN, "2018-03-01")], None, "in cohort: enalapril 401 days before index is outside the washout"),
     10: ("M", "1960-05-05", "2015-01-01", OBS_END, [(ENAL, "2019-06-02"), (LIS10, IDX)], [(HTN, "2018-03-01")], None, "out at washout: enalapril exactly 365 days before index (inclusive)"),
     11: ("F", "1960-05-05", "2015-01-01", OBS_END, [(LIS10, IDX)], [], None, "out at hypertension: no hypertension"),
@@ -67,10 +69,13 @@ P = {
     18: ("M", "1970-06-01", "2015-01-01", OBS_END, [(LIS10, IDX)], [(HTN, "2018-03-01")], None, "in cohort: turns 50 exactly on the index date"),
     19: ("F", "1960-05-05", "2015-01-01", OBS_END, [(LIS10, "2019-03-01"), (LIS10, "2021-03-01")], [(HTN, "2020-01-01")], None, "out at hypertension: index is the FIRST lisinopril (2019-03-01), hypertension came later"),
     20: ("M", "1950-07-07", "2015-01-01", "2022-02-01", [(LIS10, IDX)], [(HTN, "2018-03-01")], "2022-02-01", "in cohort: dies after index"),
+    21: ("F", "1960-05-05", "2015-01-01", OBS_END, [(LIS10, IDX)], [(HTN, "2018-03-01"), (HF, IDX)], None, "in cohort: heart failure on the index date is not 'before' index (strict <)"),
+    22: ("M", "1960-05-05", "2015-01-01", "2020-05-31", [(LIS10, IDX)], [(HTN, "2018-03-01")], None, "out at observation: observation ends the day before index"),
+    23: ("F", "1960-05-05", [("2015-01-01", "2019-12-31"), ("2020-02-20", OBS_END)], None, [(LIS10, IDX)], [(HTN, "2018-03-01")], None, "out at observation: gap between two observation periods, the one containing index is only 102 days old"),
 }
 
 # Independent expectation, step by step (see docs/testing.md).
-EXPECTED = {"index": 19, "observation": 17, "washout": 15, "hypertension": 12, "no_heart_failure": 10, "age_50": 9}
+EXPECTED = {"index": 22, "observation": 18, "washout": 16, "hypertension": 13, "no_heart_failure": 11, "age_50": 10}
 
 
 def q(s):
@@ -85,13 +90,16 @@ def main():
         out.append("INSERT INTO cdm.concept VALUES (%d, %s, %s, %s, %s, %s, %s, NULL);" % (c[0], q(c[1]), q(c[2]), q(c[3]), q(c[4]), q(c[5]), q(c[6])))
     for a in ANCESTORS:
         out.append("INSERT INTO cdm.concept_ancestor VALUES (%d, %d, %d, %d);" % a)
-    drug_id = cond_id = meas_id = 0
+    drug_id = cond_id = meas_id = obs_id = 0
     for pid, (sex, birth, obs_s, obs_e, drugs, conds, death, note) in P.items():
         y, m, d = (int(x) for x in birth.split("-"))
         gender = 8507 if sex == "M" else 8532
         out.append("-- P%d: %s" % (pid, note))
         out.append("INSERT INTO cdm.person VALUES (%d, %d, %d, %d, %d, '%s 00:00:00', 0, 38003564, 'P%d', %s, 'white', 'nonhispanic');" % (pid, gender, y, m, d, birth, pid, q(sex)))
-        out.append("INSERT INTO cdm.observation_period VALUES (%d, %d, '%s', '%s', 32817);" % (pid, pid, obs_s, obs_e))
+        periods = obs_s if isinstance(obs_s, list) else [(obs_s, obs_e)]
+        for start, end in periods:
+            obs_id += 1
+            out.append("INSERT INTO cdm.observation_period VALUES (%d, %d, '%s', '%s', 32817);" % (obs_id, pid, start, end))
         out.append("INSERT INTO cdm.visit_occurrence VALUES (%d, %d, 9202, '%s', '%s', 32817, 'ambulatory');" % (pid, pid, IDX, IDX))
         for concept, date in drugs:
             drug_id += 1

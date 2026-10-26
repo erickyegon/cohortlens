@@ -1,5 +1,7 @@
 -- Reference example cohort (docs/spec.md section 7) as plain SQL over the cdm schema.
 -- Portable between Postgres 16 and DuckDB. Returns the attrition counts, one row per step.
+-- Known limitation: age uses year/month/day of birth; a NULL month or day makes the birthday comparison NULL and
+-- the person counts as one year older. The seed and fixture always populate all three.
 -- Used by the seed integration test; the cohort engine must reproduce these numbers.
 --
 --   index      first lisinopril exposure (ingredient 1308216 + descendants)
@@ -50,7 +52,7 @@ age50 AS (
 SELECT 1 AS step, 'first lisinopril exposure (index)' AS label, COUNT(*) AS persons FROM idx
 UNION ALL SELECT 2, '>=365 days prior observation',          COUNT(*) FROM obs
 UNION ALL SELECT 3, 'no ACE inhibitor in prior 365 days',     COUNT(*) FROM washout
-UNION ALL SELECT 4, 'hypertension any time before index',     COUNT(*) FROM htn
+UNION ALL SELECT 4, 'hypertension on or before index',     COUNT(*) FROM htn
 UNION ALL SELECT 5, 'no prior heart failure',                 COUNT(*) FROM no_hf
 UNION ALL SELECT 6, 'age >= 50 at index (final)',             COUNT(*) FROM age50
 ORDER BY step;
