@@ -1,4 +1,4 @@
-.PHONY: up test e2e lint traffic chaos seed-cloud
+.PHONY: up test e2e lint traffic chaos seed-cloud verify-seed
 
 up:
 	docker compose up --build
@@ -17,6 +17,9 @@ traffic:
 
 chaos:
 	@echo "TODO: chaos/$(SCENARIO) (phase 6)" && exit 1
+
+verify-seed:
+	bash data/etl/verify_seed.sh
 
 seed-cloud:
 	@echo "TODO: load data/seed/omop_subset.sql.gz into Neon (phase 4)" && exit 1
