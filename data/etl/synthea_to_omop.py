@@ -187,7 +187,7 @@ def write_seed(con, out):
                 f = os.path.join(tmp, t + ".csv").replace("\\", "/")
                 con.execute(f"copy (select {', '.join(cols)} from {t}) to '{f}' (format csv, header false, nullstr '')")
                 gz.write(f"COPY cdm.{t} ({', '.join(cols)}) FROM stdin WITH (FORMAT csv, NULL '');\n")
-                with open(f, "r", encoding="utf-8", newline="") as fh:
+                with open(f, encoding="utf-8", newline="") as fh:
                     shutil.copyfileobj(fh, gz)
                 gz.write("\\.\n\n")
             gz.write(POST_LOAD)

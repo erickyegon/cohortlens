@@ -111,12 +111,14 @@ def test_migration_is_expand_only():
     called = {n.func.attr for n in ast.walk(upgrade) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
     assert called, "upgrade() should call op.* functions"
     assert not {c for c in called if c.startswith("drop_") or c in ("alter_column", "rename_table")}
-    assert not any("DROP" in (n.value.upper()) for n in ast.walk(upgrade) if isinstance(n, ast.Constant) and isinstance(n.value, str))
+    strings = [n.value for n in ast.walk(upgrade) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    assert not any("DROP" in text.upper() for text in strings)
 
 
 def test_foreign_key_cascades_runs_with_their_cohort(port):
     with connect("cohortlens_app", APP_PW, port) as c:
-        cohort = c.execute("insert into app.cohort_definition(name, definition) values ('t', '{}') returning id").fetchone()[0]
+        cohort = c.execute(
+            "insert into app.cohort_definition(name, definition) values ('t', '{}') returning id").fetchone()[0]
         c.execute("insert into app.cohort_run(cohort_id, status) values (%s, 'success')", (cohort,))
         c.execute("delete from app.cohort_definition where id=%s", (cohort,))
         assert c.execute("select count(*) from app.cohort_run where cohort_id=%s", (cohort,)).fetchone()[0] == 0
@@ -188,4 +190,5 @@ def test_nobody_else_can_connect(port):
 def test_seed_loaded_automatically_on_first_start(port):
     with connect("postgres", SUPER_PW, port) as c:
         assert c.execute("select count(*) from cdm.person").fetchone()[0] == 5724
-        assert c.execute("select count(*) from cdm.concept_ancestor where ancestor_concept_id = 1308216").fetchone()[0] >= 5
+        n = c.execute("select count(*) from cdm.concept_ancestor where ancestor_concept_id = 1308216").fetchone()[0]
+        assert n >= 5

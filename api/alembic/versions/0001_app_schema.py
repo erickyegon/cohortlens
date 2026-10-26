@@ -2,7 +2,8 @@
 
 Revision ID: 0001
 Revises:
-Expand-only migration (expand-then-contract): creates tables, drops nothing. Schema app is provisioned by db/init/00-roles.sh.
+Expand-only migration (expand-then-contract): creates tables, drops nothing.
+Schema app is provisioned by db/init/00-roles.sh.
 """
 import sqlalchemy as sa
 from alembic import op
@@ -28,7 +29,12 @@ def upgrade() -> None:
     op.create_table(
         "cohort_run",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("cohort_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("app.cohort_definition.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "cohort_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("app.cohort_definition.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("status", sa.Text, nullable=False),
         sa.Column("step_counts", postgresql.JSONB),
         sa.Column("final_count", sa.Integer),

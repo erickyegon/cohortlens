@@ -7,9 +7,8 @@ Skipped only when no DSN is provided (a missing psycopg install fails loudly).
 import os
 import pathlib
 
-import pytest
-
 import psycopg
+import pytest
 
 DSN = os.environ.get("COHORTLENS_TEST_DSN")
 SQL = pathlib.Path(__file__).resolve().parents[3] / "data" / "etl" / "example_cohort.sql"
