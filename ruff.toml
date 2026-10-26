@@ -7,9 +7,9 @@ select = ["E", "F", "I", "B", "UP", "S608"]  # S608: flag SQL built from strings
 ignore = []
 
 [lint.per-file-ignores]
-# the oracle tests f-string only hard-coded ints and CTE names into SQL
-"api/tests/**" = ["S608"]
-# the ETL builds SQL for DuckDB from controlled constants (file paths, fixed table names), never from user input
-"data/etl/**" = ["S608", "E501"]  # long SQL strings
+# narrow, file-level only (reviewed): these build SQL text from constants, never from user input
+"api/tests/integration/test_truth_fixture.py" = ["S608"]  # f-strings only hard-coded ints and CTE names
+"api/tests/integration/test_seed_example_cohort.py" = ["S608"]  # f-string over a fixed tuple of table names
+"data/etl/synthea_to_omop.py" = ["S608", "E501"]  # DuckDB SQL from fixed table names and file paths; long SQL strings
 # the generator emits SQL text with printf-style templates on purpose
-"api/tests/fixtures/build_truth_fixture.py" = ["UP031", "E501"]
+"api/tests/fixtures/build_truth_fixture.py" = ["UP031", "E501", "S608"]  # emits INSERT text for a static fixture, no input
