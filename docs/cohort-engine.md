@@ -48,8 +48,9 @@ Details:
 - **Executing a plan** is the caller's job and must use the read-only `cohortlens_reader` connection with its 10-second statement timeout (FR-14); the compiler itself is execution-agnostic.
 - **`concept_ancestor` must contain self-rows** (each concept is its own ancestor at distance 0, as in OMOP); otherwise `include_descendants` on a leaf concept would match nothing. The seed and the truth fixture both have them.
 - **Known difference from the SQL oracle**: for a person with a missing birth month or day the engine assumes July 1 while `data/etl/example_cohort.sql` does not handle NULL there. The seed and fixture always populate both, so the two agree on the demo data.
-- Step keys are what the code uses (`index`, `demographics`; rule steps will be positional, `rule_1`...); labels are display text only and never go into SQL.
-- **Occurrences** are records, not days: two exposures on the same day count as two. With `min_occurrences: 1` the rule is an `EXISTS` (uses the `(concept, person, date)` indexes); with more it is a correlated count.
+- Step keys are what the code uses (`index`, `demographics`, `observation`, `rule_1` … `rule_N`); labels are display text only and never go into SQL.
+- **Occurrences** are records, not days: two exposures on the same day count as two. With `min_occurrences: 1` the rule is an `EXISTS` probe per index row; with more it is a correlated count.
+- **`first_occurrence_only` is applied before the observation filter.** OHDSI Circe does it the other way round (observation first, then the earliest event that satisfies it). We take the person's first event in `date_range` and then ask whether they were observed around it, which is what a new-user design means: a person whose first-ever exposure lacks a washout is not rescued by a later one.
 - Later issues add the counting query (#8) and the baseline (#10) on top of the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
 
 
@@ -89,3 +90,18 @@ The lesson for users: the attrition waterfall exists to expose steps like these.
 
 ### Earlier hypertension-anchored version
 Anchoring on first hypertension diagnosis with a 30-day lisinopril start window was also infeasible on a Medicare-claims sample (3 of 1,000 patients), because first diagnoses cluster at the start of observation. Anchoring on treatment initiation (new-user design) avoids this.
+
+## Performance (measured)
+
+Measured on the committed seed (5,724 persons, production indexes) in PostgreSQL 16, one statement per cohort:
+
+| Definition | Last step | Every step counted in one statement |
+|---|---|---|
+| Reference cohort (6 steps) | 0.07 s | 0.03 s |
+| 10 rules, `min_occurrences: 1`, broad concepts (an "Oral Product" drug class, "Clinical finding") | 0.2 s | 0.4 s |
+| 10 rules, `min_occurrences: 2`, broad concepts | **4.4 s** | 2.5 s |
+| 10 rules, `min_occurrences: 1`, every exposure an index event (about 266k index rows) | 2.6 s | **8.8 s** |
+| 10 rules, `min_occurrences: 2`, every exposure an index event | **over 40 s** | over 40 s |
+
+Realistic cohorts are far inside the 3 s p95 target (NFR-1); the bold cases are contrived but the model allows them, and the 10 s statement timeout is what protects the database. Cause: each `min_occurrences > 1` rule is a correlated `count(*)` per index row, and the planner underestimates the filtered rows and picks quadratic nested loops. Tried and rejected: a set-based `GROUP BY ... HAVING` join (the first case went from 4.4 s to over 40 s, the fourth from 2.6 s to 5.1 s), and `MATERIALIZED` CTEs (helps the third case, makes the fourth about 3.5 times slower). Tracked in issue #37.
+
