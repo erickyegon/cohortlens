@@ -21,8 +21,10 @@ Real patient data, accounts beyond a demo login, statistics beyond descriptive c
 
 ## Quick start
 ```bash
-docker compose up --build   # or: make up
+docker compose up --build
 ```
+
+That is the single start command; it needs only Docker. `make up` is an optional shortcut for the same thing if you have `make` installed.
 
 - UI: http://localhost:8080 (nginx, proxies `/api`)
 - API: http://localhost:8000/healthz, `/readyz`

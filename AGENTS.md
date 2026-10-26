@@ -4,9 +4,11 @@
 CohortLens is a web app that tells a real-world-evidence scientist whether enough patients exist in an OMOP database to run a proposed study. A user defines a cohort, clicks **Run feasibility**, and sees the final count, an attrition waterfall and a baseline table. Stack: React/Vite/TypeScript, FastAPI, Postgres 16, OpenTelemetry → Grafana Cloud, Cloud Run + Neon. All data is synthetic.
 
 ## Commands
+Docker Compose is the primary interface (`docker compose up --build`); `make` targets are optional shortcuts and need `make` installed.
+
 | Command | What it does |
 |---|---|
-| `make up` | Start frontend, API, Postgres (auto-seeded), local telemetry via Docker Compose |
+| `docker compose up --build` (or `make up`) | Start frontend, API, Postgres (auto-seeded), local telemetry |
 | `make test` | All unit + integration tests (backend and frontend). Must pass before any PR |
 | `make e2e` | Playwright end-to-end tests against the Compose stack |
 | `make lint` | Ruff + ESLint |
