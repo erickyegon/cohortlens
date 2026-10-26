@@ -2,7 +2,9 @@
 
 Starts a Postgres 16 container with the real files mounted into /docker-entrypoint-initdb.d (roles script,
 committed OMOP seed, grants script), runs `alembic upgrade head` as the app role, then probes privileges
-as each role. Needs Docker, `pip install -r api/requirements.txt` (alembic, sqlalchemy) and the dev requirements.
+as each role. Needs Docker, `pip install -r api/requirements.txt` (alembic, sqlalchemy) and the dev requirements
+(`api/requirements-dev.txt`, added by PR #28 together with the `make test` target; until both are merged run
+`python -m pytest api/tests/integration/test_app_schema_and_roles.py` directly).
 """
 import ast
 import os
