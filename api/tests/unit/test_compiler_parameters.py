@@ -86,3 +86,53 @@ def test_compiler_source_has_no_escape_hatches_for_raw_sql():
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr)], "f-strings are not allowed in the compiler"
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod)
                 and isinstance(n.left, ast.Constant) and isinstance(n.left.value, str)], "no %-formatting"
+
+
+# ---- observation window and rules (issue #7) ------------------------------------------------------------------
+
+def rules_definition():
+    return parse_definition({
+        "name": HOSTILE_NAME,
+        "index_event": {"domain": "drug", "concept_ids": [1308216]},
+        "observation": {"prior_days": 365, "post_days": 30},
+        "rules": [
+            {"label": "'; DROP TABLE cdm.person; -- label", "type": "exclude", "domain": "drug",
+             "concept_ids": [21601784], "window": {"start_days": -365, "end_days": -1}},
+            {"label": "Twice", "type": "include", "domain": "condition", "concept_ids": [320128],
+             "include_descendants": False, "window": {"start_days": -36500, "end_days": 0}, "min_occurrences": 2},
+        ],
+    })
+
+
+def test_steps_include_observation_and_one_keyed_step_per_rule_in_order():
+    plan = build_plan(rules_definition())
+    assert [s.key for s in plan.steps] == ["index", "demographics", "observation", "rule_1", "rule_2"]
+    assert plan.step("rule_1").label.startswith("'; DROP TABLE")  # the label is display text only
+    assert plan.step("rule_2").label == "Twice"
+    assert plan.step("observation").label
+
+
+@pytest.mark.parametrize("key", ["observation", "rule_1", "rule_2"])
+def test_observation_and_rule_values_are_bound_parameters(key):
+    sql, params = compiled(build_plan(rules_definition()), key)
+    stripped = re.sub(r"cdm\.\w+", "", sql)
+    for literal in ("21601784", "320128", "1308216", "365", "36500"):
+        assert literal not in stripped, literal
+    values = repr(list(params.values()))
+    assert "365" in values and "30" in values
+
+
+def test_rule_labels_and_names_never_reach_the_sql_or_its_parameters():
+    plan = build_plan(rules_definition())
+    for step in plan.steps:
+        sql, params = compiled(plan, step.key)
+        assert "DROP TABLE" not in sql and "DROP TABLE" not in repr(params)
+
+
+def test_all_tables_read_by_rule_steps_are_cdm_tables():
+    sql, _ = compiled(build_plan(rules_definition()), "rule_2")
+    qualified = set(re.findall(r"cdm\.(\w+)", sql))
+    assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor", "observation_period"}
+    assert {"observation_period", "condition_occurrence"} <= qualified
+    prefixes = set(re.findall(r"([a-z_]+)\.[a-z_]+", sql))
+    assert prefixes <= {"cdm", "index_events", "demographics", "observation", "rule_1", "rule_2"}, prefixes
