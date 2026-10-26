@@ -13,7 +13,7 @@ import sys
 
 import psycopg
 import pytest
-from testcontainers.postgres import PostgresContainer
+from testcontainers.community.postgres import PostgresContainer
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "api" / "tests" / "fixtures" / "truth_fixture.sql"
@@ -89,6 +89,9 @@ def test_fixture_columns_match_the_etl_output_columns(conn):
     sys.path.insert(0, str(ROOT / "data" / "etl"))
     import synthea_to_omop
 
+    tables = {r[0] for r in conn.execute(
+        "select table_name from information_schema.tables where table_schema='cdm'").fetchall()}
+    assert tables == set(synthea_to_omop.TABLES)
     for table, columns in synthea_to_omop.TABLES.items():
         actual = [r[0] for r in conn.execute(
             "select column_name from information_schema.columns where table_schema='cdm' and table_name=%s "
