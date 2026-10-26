@@ -1,0 +1,15 @@
+target-version = "py312"
+line-length = 120
+extend-exclude = ["web", "data/seed"]
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "S608"]  # S608: flag SQL built from strings (AGENTS.md rule 1)
+ignore = []
+
+[lint.per-file-ignores]
+# the oracle tests f-string only hard-coded ints and CTE names into SQL
+"api/tests/**" = ["S608"]
+# the ETL builds SQL for DuckDB from controlled constants (file paths, fixed table names), never from user input
+"data/etl/**" = ["S608", "E501"]  # long SQL strings
+# the generator emits SQL text with printf-style templates on purpose
+"api/tests/fixtures/build_truth_fixture.py" = ["UP031", "E501"]
