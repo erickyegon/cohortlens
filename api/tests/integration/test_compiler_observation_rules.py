@@ -14,6 +14,7 @@ import json
 import pathlib
 
 import pytest
+from sqlalchemy import text
 
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
@@ -110,8 +111,8 @@ def test_a_window_that_looks_after_the_index_date(truth_engine):
 
 
 def test_descendants_can_be_turned_off_for_a_rule(truth_engine):
-    child_only = rule("HF", "include", "condition", [316139], -36500, -1)
-    assert persons(truth_engine, definition(rules=[child_only]), "rule_1") == [14, 16]
+    with_children = rule("HF", "include", "condition", [316139], -36500, -1)
+    assert persons(truth_engine, definition(rules=[with_children]), "rule_1") == [14, 16]
     exact = rule("HF", "include", "condition", [316139], -36500, -1, include_descendants=False)
     assert persons(truth_engine, definition(rules=[exact]), "rule_1") == [14]  # P16 only has the child concept
 
@@ -165,7 +166,87 @@ def test_reference_cohort_matches_the_sql_oracle_on_the_truth_fixture(truth_engi
     assert persons(truth_engine, defn, "rule_3") == [1, 2, 3, 6, 9, 13, 15, 18, 20, 21]
 
 
-@pytest.mark.parametrize("domain,concept,expected", [("drug", 19080128, True), ("condition", 320128, True)])
-def test_both_domains_work_as_rule_domains(truth_engine, domain, concept, expected):
+@pytest.mark.parametrize("domain,concept", [("drug", 19080128), ("condition", 320128)])
+def test_both_domains_work_as_rule_domains(truth_engine, domain, concept):
     r = rule("x", "include", domain, [concept], -36500, 36500)
-    assert bool(persons(truth_engine, definition(rules=[r]), "rule_1")) is expected
+    assert persons(truth_engine, definition(rules=[r]), "rule_1")  # a match in this domain exists for most people
+
+
+# ---- review round 1 on PR #36 ---------------------------------------------------------------------------------
+
+INSERT_PERSON = text("insert into cdm.person (person_id, gender_concept_id, year_of_birth, month_of_birth,"
+                     " day_of_birth, race_concept_id, ethnicity_concept_id) values (:p, 8507, 1960, 1, 1, 0, 0)")
+INSERT_PERIOD = text("insert into cdm.observation_period values (:p, :p, :s, :e, 32817)")
+INSERT_DRUG = text("insert into cdm.drug_exposure (drug_exposure_id, person_id, drug_concept_id,"
+                   " drug_exposure_start_date,"
+                   " drug_exposure_end_date, drug_type_concept_id) values (:i, :p, 19080128, :d, :d, 32818)")
+
+
+def with_temporary_people(engine, work):
+    """Run `work(conn)` inside a transaction that is always rolled back, so the shared fixture is not changed."""
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            return work(conn)
+        finally:
+            trans.rollback()
+
+
+def test_occurrences_are_records_not_days(truth_engine):
+    day = dt.date(2020, 6, 1)
+    twice = rule("Two records", "include", "drug", [1308216], 0, 0, min_occurrences=2)
+
+    def work(conn):
+        conn.execute(INSERT_PERSON, {"p": 902})
+        conn.execute(INSERT_PERIOD, {"p": 902, "s": dt.date(2015, 1, 1), "e": dt.date(2023, 12, 31)})
+        conn.execute(INSERT_DRUG, {"i": 9021, "p": 902, "d": day})
+        conn.execute(INSERT_DRUG, {"i": 9022, "p": 902, "d": day})  # a second record on the same day
+        plan = build_plan(definition(rules=[twice]))
+        return sorted(r[0] for r in conn.execute(plan.rows("rule_1")).fetchall())
+
+    assert with_temporary_people(truth_engine, work) == [902]  # two records on one day are two occurrences
+
+
+def test_observation_period_ending_exactly_on_the_index_date(truth_engine):
+    day = dt.date(2020, 6, 1)
+
+    def work(conn):
+        conn.execute(INSERT_PERSON, {"p": 903})
+        conn.execute(INSERT_PERIOD, {"p": 903, "s": dt.date(2015, 1, 1), "e": day})
+        conn.execute(INSERT_DRUG, {"i": 9031, "p": 903, "d": day})
+        result = {}
+        for post in (0, 1):
+            plan = build_plan(definition(observation={"post_days": post}))
+            result[post] = 903 in [r[0] for r in conn.execute(plan.rows("observation")).fetchall()]
+        return result
+
+    assert with_temporary_people(truth_engine, work) == {0: True, 1: False}
+
+
+def test_a_window_that_starts_after_the_index_date(truth_engine):
+    # hypertension recorded 1..30 days after the index: only P12 (the day after)
+    soon_after = rule("Hypertension just after", "include", "condition", [320128], 1, 30)
+    assert persons(truth_engine, definition(rules=[soon_after]), "rule_1") == [12]
+
+
+def test_exclude_with_min_occurrences_is_evaluated_per_index_row(truth_engine):
+    # as separate index events, P19's 2019 row has two lisinopril records in 0..1000 days, the 2021 row has one
+    repeat_use = rule("Repeat use", "exclude", "drug", [1308216], 0, 1000, min_occurrences=2)
+    plan = build_plan(definition(rules=[repeat_use], index={"first_occurrence_only": False}))
+    with truth_engine.connect() as conn:
+        rows_19 = [(r[0], r[1]) for r in conn.execute(plan.rows("rule_1")).fetchall() if r[0] == 19]
+    assert rows_19 == [(19, dt.date(2021, 3, 1))]
+
+
+def test_drug_rule_without_descendants_matches_the_exact_concept(truth_engine):
+    exact_10mg = rule("10 mg tablets", "include", "drug", [19080128], -36500, 36500, include_descendants=False)
+    kept = persons(truth_engine, definition(rules=[exact_10mg]), "rule_1")
+    assert kept == sorted(ALL_LISINOPRIL - {2, 3, 22})  # not the 20 mg tablet (P2) nor the combination (P3)
+
+
+def test_ten_rules_run_and_only_remove_people(truth_engine):
+    rules = [rule(f"r{i}", "include", "drug", [1308216], -36500, 36500) for i in range(1, 11)]
+    defn = definition(rules=rules)
+    plan = build_plan(defn)
+    assert [s.key for s in plan.steps][-2:] == ["rule_9", "rule_10"]
+    assert persons(truth_engine, defn, "rule_10") == sorted(ALL_LISINOPRIL - {22})

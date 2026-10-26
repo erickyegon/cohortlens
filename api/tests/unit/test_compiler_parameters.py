@@ -136,3 +136,27 @@ def test_all_tables_read_by_rule_steps_are_cdm_tables():
     assert {"observation_period", "condition_occurrence"} <= qualified
     prefixes = set(re.findall(r"\b([a-z_]+)\.[a-z_]+", sql))
     assert prefixes <= {"cdm", "index_events", "demographics", "observation", "rule_1", "rule_2"}, prefixes
+
+
+def test_every_table_in_every_step_is_a_schema_qualified_cdm_table():
+    """Walks the SQLAlchemy objects (not the SQL text), so an unqualified table cannot hide from a regex."""
+    from sqlalchemy import Table
+    from sqlalchemy.sql import visitors
+
+    plan = build_plan(rules_definition())
+    seen = {}
+    for step in plan.steps:
+        tables = {e for e in visitors.iterate(plan.rows(step.key)) if isinstance(e, Table)}
+        assert tables, step.key
+        assert all(t.schema == "cdm" for t in tables), (step.key, [(t.schema, t.name) for t in tables])
+        seen[step.key] = {t.name for t in tables}
+    assert seen["observation"] >= {"observation_period", "person", "drug_exposure"}
+    assert seen["rule_2"] >= {"condition_occurrence", "observation_period"}
+
+
+def test_ten_rules_get_ten_positional_keys():
+    rules = [{"label": f"r{i}", "type": "exclude", "domain": "drug", "concept_ids": [1],
+              "window": {"start_days": -1, "end_days": -1}} for i in range(10)]
+    plan = build_plan(parse_definition({"name": "x", "index_event": {"domain": "drug", "concept_ids": [1]},
+                                        "rules": rules}))
+    assert [s.key for s in plan.steps][3:] == [f"rule_{i}" for i in range(1, 11)]
