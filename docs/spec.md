@@ -128,12 +128,14 @@ The demo and the truth fixture are built around a **new-user design**, which is 
 |---|---|
 | Index event | First lisinopril exposure (ingredient 1308216, with descendants) |
 | Observation | At least 365 days of observation before the index date |
-| Washout | No ACE inhibitor exposure (class concept with descendants) in the 365 days before the index date |
-| Include | Essential hypertension (320128, with descendants) in the 365 days before the index date |
+| Washout | No ACE inhibitor exposure (ATC "ACE inhibitors, plain" 21601784, with descendants) in the 365 days before the index date |
+| Include | Essential hypertension (320128, with descendants) at any time on or before the index date |
 | Exclude | Heart failure (316139, with descendants) any time before the index date |
-| Demographics | Age 65 or older at the index date |
+| Demographics | Age 50 or older at the index date |
 
-The product must be able to express every element above using the cohort definition model in FR-3/FR-4. A deliberately infeasible counter-example is documented in `docs/cohort-engine.md`.
+Expected attrition on the demo dataset: 920 → 920 → 919 → 837 → 829 → **481** patients. The same cohort is available as plain SQL in `data/etl/example_cohort.sql`, and a seed integration test asserts these numbers.
+
+The product must be able to express every element above using the cohort definition model in FR-3/FR-4. A deliberately infeasible counter-example (hypertension restricted to the 365 days before index, age 65+) is documented in `docs/cohort-engine.md`.
 
 ## 8. Glossary
 
