@@ -1,4 +1,4 @@
-.PHONY: up test e2e lint traffic chaos seed-cloud verify-seed
+.PHONY: up test e2e lint traffic chaos seed-cloud verify-seed smoke
 
 up:
 	docker compose up --build
@@ -23,3 +23,6 @@ verify-seed:
 
 seed-cloud:
 	@echo "TODO: load data/seed/omop_subset.sql.gz into Neon (phase 4)" && exit 1
+
+smoke:
+	bash scripts/smoke_compose.sh

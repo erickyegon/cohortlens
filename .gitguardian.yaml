@@ -1,0 +1,7 @@
+version: 2
+secret:
+  # LOCAL-ONLY placeholder passwords so `docker compose up --build` works from a clean clone.
+  # Real credentials live in cloud secret stores and are never committed.
+  ignored-paths:
+    - compose.yaml
+    - .env.example

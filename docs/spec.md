@@ -63,7 +63,7 @@ All data is synthetic. No real patient information ever exists in the system.
 | FR-14 | Queries are cancelled after a 10 s statement timeout. | US-4 |
 | FR-15 | The UI provides a cohort list, a builder (with reorderable rules) and a results screen with waterfall chart, baseline table and run history. | US-2, US-4–7 |
 | FR-16 | Alert rules on run error rate and p95 latency route prod incidents to the on-call agent. | US-10, US-11 |
-| FR-17 | `make up` starts frontend, API, database (auto-seeded) and local telemetry stack. | US-12 |
+| FR-17 | `docker compose up --build` starts frontend, API, database (auto-seeded) and local telemetry stack. | US-12 |
 
 ## 5. Non-functional requirements
 
@@ -118,7 +118,7 @@ All data is synthetic. No real patient information ever exists in the system.
 - Given a database outage affecting all revisions, then the agent escalates and takes no rollback action.
 
 **US-12 One command**
-- Given a clean clone with Docker installed, when I run `make up`, then the UI is reachable at http://localhost:8080 with seeded data and no manual steps.
+- Given a clean clone with Docker installed, when I run `docker compose up --build`, then the UI is reachable at http://localhost:8080 with seeded data and no manual steps.
 
 ## 7. Reference example cohort
 

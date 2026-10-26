@@ -20,7 +20,18 @@ p95 run under 3 s; counts below 11 shown as "<11"; synthetic data only.
 Real patient data, accounts beyond a demo login, statistics beyond descriptive counts, free-text cohort entry (stretch).
 
 ## Quick start
-`make up` → http://localhost:8080 (not yet implemented)
+```bash
+docker compose up --build
+```
+
+That is the single start command; it needs only Docker. `make up` is an optional shortcut for the same thing if you have `make` installed.
+
+- UI: http://localhost:8080 (nginx, proxies `/api`)
+- API: http://localhost:8000/healthz, `/readyz`
+- Grafana (local telemetry stack): http://localhost:3000
+- Postgres: `127.0.0.1:15432` (database `cohortlens`)
+
+First start loads the committed OMOP seed automatically; later starts reuse the `pgdata` volume. `bash scripts/smoke_compose.sh --clean` runs the stack smoke test from scratch (needs Docker; `make` is optional).
 
 ## Live URLs / demo video
 TBD
