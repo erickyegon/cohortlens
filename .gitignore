@@ -1,0 +1,39 @@
+# secrets and local config
+.env
+.env.*
+!.env.example
+
+# raw / downloaded data (the committed seed lives in data/seed/)
+data/raw/
+*.zip
+*.parquet
+*.csv.gz
+!data/seed/*.sql.gz
+
+# local databases
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# node
+node_modules/
+dist/
+coverage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

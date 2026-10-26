@@ -1,0 +1,24 @@
+name: User story
+description: A story or task with Given/When/Then acceptance criteria
+labels: ["ready"]
+body:
+  - type: textarea
+    id: context
+    attributes: {label: Context, description: Why this matters and which spec items it covers (US-n, FR-n)}
+    validations: {required: true}
+  - type: textarea
+    id: story
+    attributes: {label: User story, description: "As a …, I want …, so that …"}
+    validations: {required: true}
+  - type: textarea
+    id: criteria
+    attributes: {label: Acceptance criteria, description: "Given / When / Then, one per line"}
+    validations: {required: true}
+  - type: textarea
+    id: out_of_scope
+    attributes: {label: Out of scope}
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of done
+      value: "- [ ] Tests written first and passing\n- [ ] make lint and make test green\n- [ ] Docs updated\n- [ ] PR says Closes #N"
