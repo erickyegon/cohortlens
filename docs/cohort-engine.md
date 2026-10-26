@@ -29,8 +29,20 @@ Conventions:
 - `parse_definition(raw)` returns a `CohortDefinition` or raises `DefinitionError` with `errors = [{"field": "rules.1.window.end_days", "message": "..."}]`: every problem at once, as dotted field paths the UI can mark, never echoing submitted text: names, labels and values are not in messages, and an unknown or non-string key is reported as `<unknown field>` under its parent path (for example `rules.1.window.<unknown field>`). If a list is too long its items are still validated, so one round of fixes suffices.
 - Measurement criteria (value ranges) are out of scope for now; `measurement` is rejected as a domain until it has a model.
 
-## Compilation
-_Added with the SQL builder issues (#6 onward)._
+## Compilation (`compiler.py`, `schema.py`)
+
+`build_plan(definition)` returns a `CohortPlan`: an ordered tuple of steps, each a CTE exposing `(person_id, index_date)`. `plan.rows(key)` is the `SELECT` for a step, including the whole CTE chain up to it. Everything is built with SQLAlchemy Core, so every value (concept ids, dates, ages, sex) is a bound parameter and no user text ever becomes SQL; tests enforce this and that the compiler source contains no raw-SQL escape hatches. The compiler never executes anything.
+
+| Step key | Meaning |
+|---|---|
+| `index` | Events of the index domain whose concept matches (expanded through `concept_ancestor` when `include_descendants`), inside `date_range`, then one earliest event per person when `first_occurrence_only` (otherwise every distinct event date) |
+| `demographics` | Index rows whose person is in the requested sex list and whose age **at that row's index date** is within `age_min`..`age_max` |
+
+Details:
+- **Sex** is always an explicit filter on the OMOP gender concepts (8532 female, 8507 male); a person with another or unknown gender never matches, even with the default `["F", "M"]`.
+- **Age** is `year(index) - year_of_birth`, minus one if the birthday has not been reached; a missing month or day of birth is replaced by July 1.
+- Later issues add the observation window (#7), rules with windows (#7) and the counting query (#8) as further steps in the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
+
 
 ## Worked examples
 

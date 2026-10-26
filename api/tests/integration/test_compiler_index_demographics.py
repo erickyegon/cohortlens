@@ -7,9 +7,10 @@ P17 is 49 on the index date (turns 50 the next day) and P18 turns 50 on it; P20 
 import datetime as dt
 
 import pytest
+from sqlalchemy import text
+
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
-from sqlalchemy import text
 
 LISINOPRIL = 1308216
 HYPERTENSION = 320128
@@ -134,8 +135,9 @@ def test_missing_birth_month_and_day_assume_july_first(truth_engine):
             conn.execute(insert_person)
             conn.execute(insert_drug, {"d": dt.date(2020, 6, 30)})
             assert 900 not in [r[0] for r in conn.execute(plan.rows("demographics")).fetchall()]  # still 49
-            conn.execute(text("update cdm.drug_exposure set drug_exposure_start_date = :d where drug_exposure_id = 900"),
-                         {"d": dt.date(2020, 7, 1)})
+            conn.execute(
+                text("update cdm.drug_exposure set drug_exposure_start_date = :d where drug_exposure_id = 900"),
+                {"d": dt.date(2020, 7, 1)})
             assert 900 in [r[0] for r in conn.execute(plan.rows("demographics")).fetchall()]  # turns 50 on July 1
         finally:
             trans.rollback()

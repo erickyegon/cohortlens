@@ -6,9 +6,10 @@ import pathlib
 import re
 
 import pytest
+from sqlalchemy.dialects import postgresql
+
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
-from sqlalchemy.dialects import postgresql
 
 COMPILER = pathlib.Path(__file__).resolve().parents[2] / "app" / "cohort_engine" / "compiler.py"
 HOSTILE_NAME = "'; DROP TABLE cdm.person; --"
@@ -43,9 +44,10 @@ def test_values_are_bound_parameters_not_sql_text(key, domain, concept):
 
 def test_demographic_values_are_parameters_too():
     sql, params = compiled(build_plan(definition()), "demographics")
-    assert "'F'" not in sql
-    assert any(v in ("F", ["F"]) or "F" in repr(v) for v in params.values())
-    assert 50 in params.values() and 79 in params.values()
+    assert "'F'" not in sql and "8532" not in sql
+    values = list(params.values())
+    assert [8532] in values  # female, as the OMOP gender concept, bound rather than written into the SQL
+    assert 50 in values and 79 in values
 
 
 def test_user_text_never_reaches_the_sql():
@@ -57,8 +59,11 @@ def test_user_text_never_reaches_the_sql():
 
 def test_only_cdm_tables_are_read():
     sql, _ = compiled(build_plan(definition()), "demographics")
-    tables = set(re.findall(r"(?:FROM|JOIN)\s+([\w.]+)", sql))
-    assert tables and all(t.startswith("cdm.") or t in ("index_events", "demographics") for t in tables), tables
+    qualified = set(re.findall(r"cdm\.(\w+)", sql))
+    assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor"}, qualified
+    # every dotted name is either in schema cdm or one of our own CTEs: nothing from another schema
+    prefixes = set(re.findall(r"([a-z_]+)\.[a-z_]+", sql))
+    assert prefixes <= {"cdm", "index_events", "demographics"}, prefixes
 
 
 def test_steps_are_ordered_and_labelled():
