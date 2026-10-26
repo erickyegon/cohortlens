@@ -4,9 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 NAME=cohortlens-seed-verify
-PORT=${VERIFY_PORT:-55432}
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" -e POSTGRES_PASSWORD=verify -e POSTGRES_DB=cohortlens -p "$PORT":5432 postgres:16 >/dev/null
+docker run -d --name "$NAME" -e POSTGRES_PASSWORD=verify -e POSTGRES_DB=cohortlens -p 127.0.0.1::5432 postgres:16 >/dev/null
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 until docker exec "$NAME" pg_isready -U postgres -d cohortlens >/dev/null 2>&1; do sleep 1; done
@@ -16,5 +15,6 @@ gunzip -c data/seed/omop_subset.sql.gz | docker exec -i "$NAME" psql -q -v ON_ER
 docker exec "$NAME" psql -U postgres -d cohortlens -c "select pg_size_pretty(pg_database_size('cohortlens')) as db_size"
 docker exec -i "$NAME" psql -U postgres -d cohortlens < data/etl/example_cohort.sql
 
-export COHORTLENS_TEST_DSN="postgresql://postgres:verify@localhost:$PORT/cohortlens"
+PORT=$(docker port "$NAME" 5432/tcp | head -1 | sed "s/.*://")
+export COHORTLENS_TEST_DSN="postgresql://postgres:verify@127.0.0.1:$PORT/cohortlens"
 python -m pytest api/tests/integration/test_seed_example_cohort.py -q

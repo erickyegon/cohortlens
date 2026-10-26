@@ -4,7 +4,7 @@ up:
 	docker compose up --build
 
 test:
-	@echo "TODO: wire pytest + vitest (phase 2/3)" && exit 1
+	python -m pytest api/tests -q  # frontend (Vitest) joins this target when web tests exist
 
 e2e:
 	@echo "TODO: Playwright (stretch)" && exit 1

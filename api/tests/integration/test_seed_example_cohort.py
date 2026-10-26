@@ -2,14 +2,14 @@
 
 Runs against a Postgres 16 database that has the committed seed loaded
 (`make verify-seed` starts a throwaway container and sets COHORTLENS_TEST_DSN).
-Skipped when no DSN is provided so `pytest` stays runnable without Docker.
+Skipped only when no DSN is provided (a missing psycopg install fails loudly).
 """
 import os
 import pathlib
 
 import pytest
 
-psycopg = pytest.importorskip("psycopg")
+import psycopg
 
 DSN = os.environ.get("COHORTLENS_TEST_DSN")
 SQL = pathlib.Path(__file__).resolve().parents[3] / "data" / "etl" / "example_cohort.sql"

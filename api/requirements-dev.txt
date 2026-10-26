@@ -1,0 +1,4 @@
+pytest>=8,<9
+psycopg[binary]>=3.2,<4
+testcontainers[postgres]>=4.8,<5
+-r ../data/etl/requirements.txt
