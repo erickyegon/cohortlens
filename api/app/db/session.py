@@ -1,5 +1,6 @@
 """Database engines: a read-only engine for the cdm schema and a read-write engine for the app schema."""
 import os
+from functools import lru_cache
 
 from sqlalchemy import create_engine
 
@@ -10,6 +11,7 @@ def _url(name: str) -> str:
     return os.environ[name].replace("postgresql://", "postgresql+psycopg://", 1)
 
 
+@lru_cache(maxsize=1)
 def reader_engine():
     return create_engine(
         _url("DATABASE_URL_READER"),
@@ -18,5 +20,6 @@ def reader_engine():
     )
 
 
+@lru_cache(maxsize=1)
 def app_engine():
     return create_engine(_url("DATABASE_URL_APP"), pool_pre_ping=True)
