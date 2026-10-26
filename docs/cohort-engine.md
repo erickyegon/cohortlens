@@ -2,7 +2,27 @@
 
 Definition model (Pydantic) → validation → SQLAlchemy Core compiler → CTE chain (index_events → demographics → observation_window → one CTE per rule → final) → per-step counts → suppression → baseline.
 
-_Details are added during phase 2._
+## Definition model (`api/app/cohort_engine/models.py`)
+
+A cohort definition is typed data validated before anything else runs. The module imports no database driver, so validating a definition can never execute SQL (a test enforces this). The reference cohort in `api/tests/fixtures/reference_cohort.json` is the spec §7 definition expressed in this model.
+
+| Part | Fields |
+|---|---|
+| `name` | 1–200 characters |
+| `index_event` | `domain` (`condition` or `drug`), `concept_ids` (1+ positive ints, de-duplicated), `include_descendants` (default true), `first_occurrence_only` (default true), optional `date_range` (`start`/`end`, either may be open) |
+| `demographics` | `age_min`, `age_max` (0–130, optional), `sex` (`F`, `M`; default both) |
+| `observation` | `prior_days`, `post_days` (0–36,500, default 0) |
+| `rules` (0–10) | `label`, `type` (`include`/`exclude`), `domain`, `concept_ids`, `include_descendants`, `window` (`start_days`, `end_days`, offsets from the index date, -36,500…36,500, start ≤ end), `min_occurrences` (1–100, default 1) |
+
+Conventions:
+- Windows are offsets from the index date: negative is before, `0` is the index date itself. "Any time before" is `ANY_TIME_BEFORE` (-36,500 days, a century), not a short constant, because real patient histories are long.
+- Unknown keys are errors, so a typo (`inclde_descendants`) cannot silently drop a criterion.
+- Numbers are strict integers (`"5"` and `1.5` are rejected); concept ids must be positive.
+- `parse_definition(raw)` returns a `CohortDefinition` or raises `DefinitionError` with `errors = [{"field": "rules.1.window.end_days", "message": "..."}]`: every problem at once, as dotted field paths the UI can mark, never echoing submitted text such as names or labels.
+- Measurement criteria (value ranges) are out of scope for now; `measurement` is rejected as a domain until it has a model.
+
+## Compilation
+_Added with the SQL builder issues (#6 onward)._
 
 ## Worked examples
 
