@@ -40,6 +40,7 @@ Two pull requests ran the full loop. Both went through two Reviewer rounds befor
 | Reviewer round 2 | **Approve**, with nits |
 | Nit commit | [`83d5e7a`](https://github.com/erickyegon/cohortlens/commit/83d5e7a) |
 | Formal review (both rounds) | [review on #28](https://github.com/erickyegon/cohortlens/pull/28#pullrequestreview-5657292545) |
+| Merge (human, merge commit) | [`62ad012`](https://github.com/erickyegon/cohortlens/commit/62ad012) — the three branch commits and their `Agent-Role:` trailers are on `main` |
 
 ### 2. Issues → build → review: Compose stack and app schema ([#2](https://github.com/erickyegon/cohortlens/issues/2), [#3](https://github.com/erickyegon/cohortlens/issues/3))
 
@@ -54,10 +55,14 @@ Two pull requests ran the full loop. Both went through two Reviewer rounds befor
 | Reviewer round 2 | **Approve** on code and tests; GitGuardian left to the human (documented local-only placeholder passwords) |
 | Follow-up commit | [`fcbdc99`](https://github.com/erickyegon/cohortlens/commit/fcbdc99) |
 | Formal review (both rounds) | [review on #29](https://github.com/erickyegon/cohortlens/pull/29#pullrequestreview-5657411791) |
+| Merge (human, merge commit) | [`604a7d9`](https://github.com/erickyegon/cohortlens/commit/604a7d9) — merged after #28, as planned; GitGuardian incidents marked as false positives first |
 
 ### 3. Merge and deploy
-The human merges #28 first (because #29 references files it adds), then #29, each with a merge commit. **Status when this was written: both PRs open and approved by the Reviewer agent; merge commits and the dev deploy and prod approval steps of this walkthrough are added here once they exist** (deploys arrive with the delivery epic, E4).
+- #28 merged as [`62ad012`](https://github.com/erickyegon/cohortlens/commit/62ad012), #29 as [`604a7d9`](https://github.com/erickyegon/cohortlens/commit/604a7d9), and this document's own PR #30 as [`2e0a893`](https://github.com/erickyegon/cohortlens/commit/2e0a893), all with merge commits; the issues closed automatically through `Closes #N`.
+- Order mattered: #28 first, because #29 references files it adds (`data/etl/cdm_ddl.sql`, `api/requirements-dev.txt`).
+- Note: #30 was merged before this table had its merge links, which is why this follow-up PR exists.
+- **Still to come:** the dev deploy and the prod approval step. They arrive with the delivery epic (E4); CI (#16) is the next piece and will make the checks below required on `main`.
 
 ## Human decisions recorded along the way
 - Dataset: Synthea generation instead of the Eunomia/SynPUF candidates, and the reference cohort definition (hypertension any time before index, age ≥ 50): [ADR-001](adr/001-omop-subset-over-custom-schema.md).
-- GitGuardian: the two flagged values are local-only placeholder passwords already in the PR history; the human's decision is to mark both incidents as false positives in the GitGuardian dashboard (an action only the account owner can take). Real database credentials live in Google Secret Manager (see [deployment.md](deployment.md)) and the placeholder values must never be used in any real environment.
+- GitGuardian: the two flagged values are local-only placeholder passwords already in the PR history; the two flagged values were marked as false positives in the GitGuardian dashboard by the account owner. Real database credentials live in Google Secret Manager (see [deployment.md](deployment.md)) and the placeholder values must never be used in any real environment.

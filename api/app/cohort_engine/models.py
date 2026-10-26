@@ -32,7 +32,16 @@ MAX_DATE = dt.date(2100, 12, 31)
 MAX_WINDOW_DAYS = 36_500  # 100 years: wide enough for "any time before" on any real patient history
 ANY_TIME_BEFORE = -MAX_WINDOW_DAYS
 
-Domain = Literal["condition", "drug"]  # measurement criteria need value ranges and arrive in a later issue
+def _text_only(value: Any) -> Any:
+    """Enumerated fields accept real text only: pydantic's lax mode would turn bytes into text."""
+    if not isinstance(value, str):
+        raise ValueError("must be text")
+    return value
+
+
+TextOnly = BeforeValidator(_text_only)
+# measurement criteria need value ranges and arrive in a later issue
+Domain = Annotated[Literal["condition", "drug"], TextOnly]
 
 ConceptId = Annotated[int, Field(strict=True, gt=0, le=MAX_CONCEPT_ID)]
 ConceptIds = Annotated[list[ConceptId], Field(min_length=1, max_length=1000)]
@@ -57,10 +66,10 @@ def _printable_text(value: str) -> str:
     return value
 
 
-Label = Annotated[str, Field(min_length=1, max_length=100), AfterValidator(_printable_text)]
-Name = Annotated[str, Field(min_length=1, max_length=200), AfterValidator(_printable_text)]
+Label = Annotated[str, Field(strict=True, min_length=1, max_length=100), AfterValidator(_printable_text)]
+Name = Annotated[str, Field(strict=True, min_length=1, max_length=200), AfterValidator(_printable_text)]
 
-_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # ASCII digits only (\d also matches other scripts)
 
 
 def _iso_date(value: Any) -> Any:
@@ -119,7 +128,9 @@ class IndexEvent(_Strict):
 class Demographics(_Strict):
     age_min: Age | None = None
     age_max: Age | None = None
-    sex: Annotated[list[Literal["F", "M"]], Field(min_length=1)] = Field(default_factory=lambda: ["F", "M"])
+    sex: Annotated[list[Annotated[Literal["F", "M"], TextOnly]], Field(min_length=1)] = Field(
+        default_factory=lambda: ["F", "M"]
+    )
 
     @field_validator("age_max")
     @classmethod
@@ -155,7 +166,7 @@ class Window(_Strict):
 
 class Rule(_Strict):
     label: Label
-    type: Literal["include", "exclude"]
+    type: Annotated[Literal["include", "exclude"], TextOnly]
     domain: Domain
     concept_ids: ConceptIds
     include_descendants: Flag = True
