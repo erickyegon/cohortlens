@@ -1,6 +1,63 @@
 # Process
 
-Story flow is defined in [agents.md](agents.md).
+How one story moves from issue to production, who does what, and where the evidence lives. Roles and handoffs are defined in [agents.md](agents.md); this document is the practical side.
 
-## Worked example (to be completed with the first real story)
-Issue → branch → failing tests → PR → review → dev deploy → prod approval, with links.
+## The loop
+
+1. **Spec agent** creates the issue from `docs/spec.md` with Given/When/Then criteria and labels it `ready`; it appears on the [project board](https://github.com/users/erickyegon/projects/1).
+2. **Test agent** opens branch `feat/<epic>-<slug>` or `feat/US-n-<slug>` and commits tests that encode the criteria.
+3. **Builder agent** implements until `make test` passes and opens a PR that starts with `Agent: Builder` and contains `Closes #N`.
+4. **Reviewer agent** checks the PR criterion by criterion. Maximum two rounds, then the human steps in (`needs-human`).
+5. **Human** merges. CI deploys to dev automatically; the human approves promotion to prod.
+
+## Conventions that make the trail verifiable
+
+- Every PR description starts with an `Agent: <role>` line and says `Closes #N`.
+- Every commit carries an `Agent-Role:` trailer and a `Refs #N` / `Closes #N` line.
+- **Merge with a merge commit, never squash or rebase-merge.** Squashing collapses a PR into one commit and drops the per-commit `Agent-Role:` trailers from `main`; they are part of the evidence trail.
+- The human is the only one who merges and approves production deploys (AGENTS.md rule 5).
+
+## Why reviews are posted as comments
+
+The project has one GitHub account (`erickyegon`) that acts as author, reviewer and merger. GitHub does not let an account approve or request changes on its own pull request, so the Reviewer agent's formal review is submitted as a **comment review** (`gh pr review --comment`) whose first line states the verdict (`APPROVE` or `REQUEST CHANGES`). The review lists each acceptance criterion by name with `MET` / `NOT MET` / `PARTIAL` and evidence, then the findings with severity. The human's merge is the actual approval. With a second account or a bot identity the same review would be submitted as a real approval, and nothing else in the process would change.
+
+Each review is one comment that summarises both rounds; the fixes between rounds are separate commits on the PR branch, so the PR's commit list shows the round-trip.
+
+## Worked example: issues #2, #3 and #4
+
+Two pull requests ran the full loop. Both went through two Reviewer rounds before being handed to the human to merge.
+
+### 1. Issue → tests → build: truth fixture ([#4](https://github.com/erickyegon/cohortlens/issues/4))
+
+| Step | Evidence |
+|---|---|
+| Issue with Given/When/Then criteria | [#4 Truth fixture dataset](https://github.com/erickyegon/cohortlens/issues/4) |
+| Branch | `feat/E1-truth-fixture` |
+| Tests and fixture (Test agent) | [`003cee3`](https://github.com/erickyegon/cohortlens/commit/003cee3) — 20 patients, 14 tests |
+| PR | [#28](https://github.com/erickyegon/cohortlens/pull/28) — `Agent: Test`, `Closes #4` |
+| Reviewer round 1 | **Request changes**: a wrong day count in the doc (100 vs 101), no CI/`make test`, silent test skips, a vacuous assertion, missing boundary cases |
+| Fix commit | [`57e0bdb`](https://github.com/erickyegon/cohortlens/commit/57e0bdb) — three new boundary patients, schema-drift test, `make test` runs pytest |
+| Reviewer round 2 | **Approve**, with nits |
+| Nit commit | [`83d5e7a`](https://github.com/erickyegon/cohortlens/commit/83d5e7a) |
+| Formal review (both rounds) | [review on #28](https://github.com/erickyegon/cohortlens/pull/28#pullrequestreview-5657292545) |
+
+### 2. Issues → build → review: Compose stack and app schema ([#2](https://github.com/erickyegon/cohortlens/issues/2), [#3](https://github.com/erickyegon/cohortlens/issues/3))
+
+| Step | Evidence |
+|---|---|
+| Issues | [#2 Compose stack with seeded Postgres](https://github.com/erickyegon/cohortlens/issues/2), [#3 Alembic app schema](https://github.com/erickyegon/cohortlens/issues/3) |
+| Branch | `feat/E1-compose-stack` |
+| Implementation (Builder agent) | [`b122588`](https://github.com/erickyegon/cohortlens/commit/b122588), [`4a91a29`](https://github.com/erickyegon/cohortlens/commit/4a91a29) |
+| PR | [#29](https://github.com/erickyegon/cohortlens/pull/29) — `Agent: Builder`, `Closes #2, closes #3` |
+| Reviewer round 1 | **Request changes**: no automated tests for #2/#3, PUBLIC `CONNECT`/`TEMP` on the database, passwords interpolated into SQL by a shell script, `lgtm` without a healthcheck, GitGuardian red |
+| Fix commit | [`6ab3766`](https://github.com/erickyegon/cohortlens/commit/6ab3766) — 25 integration tests, hardened grants, quoted psql variables, healthchecks, non-root web image |
+| Reviewer round 2 | **Approve** on code and tests; GitGuardian left to the human (documented local-only placeholder passwords) |
+| Follow-up commit | [`fcbdc99`](https://github.com/erickyegon/cohortlens/commit/fcbdc99) |
+| Formal review (both rounds) | [review on #29](https://github.com/erickyegon/cohortlens/pull/29#pullrequestreview-5657411791) |
+
+### 3. Merge and deploy
+The human merges #28 first (because #29 references files it adds), then #29, each with a merge commit. **Status when this was written: both PRs open and approved by the Reviewer agent; merge commits and the dev deploy and prod approval steps of this walkthrough are added here once they exist** (deploys arrive with the delivery epic, E4).
+
+## Human decisions recorded along the way
+- Dataset: Synthea generation instead of the Eunomia/SynPUF candidates, and the reference cohort definition (hypertension any time before index, age ≥ 50): [ADR-001](adr/001-omop-subset-over-custom-schema.md).
+- GitGuardian: the two flagged values are local-only placeholder passwords already in the PR history; the human's decision is to mark both incidents as false positives in the GitGuardian dashboard (an action only the account owner can take). Real database credentials live in Google Secret Manager (see [deployment.md](deployment.md)) and the placeholder values must never be used in any real environment.
