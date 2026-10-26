@@ -10,6 +10,7 @@ import subprocess
 import sys
 
 import pytest
+
 from app.cohort_engine.models import (
     ANY_TIME_BEFORE,
     MAX_RULES,
@@ -154,7 +155,7 @@ def test_validation_has_no_database_dependency_so_no_sql_can_run():
             "bad = [m for m in sys.modules if m.split('.')[0] in banned or m.startswith('app.db')]; "
             "print(bad); sys.exit(1 if bad else 0)")
     result = subprocess.run([sys.executable, "-c", code], cwd=API_DIR, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # ---- more impossible definitions ----------------------------------------------------------------------------
@@ -414,3 +415,23 @@ def test_sex_and_rule_concept_ids_are_deduplicated():
     definition = parse_definition(data)
     assert definition.demographics.sex == ["F"]
     assert definition.rules[0].concept_ids == [5, 4]
+
+
+def test_text_and_enum_fields_reject_bytes():
+    data = reference()
+    data["name"] = b"bytes name"
+    data["rules"] = [rule(label=b"abc", domain=b"condition")]
+    data["demographics"] = {"sex": [b"F"]}
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert {"name", "rules.0.label", "rules.0.domain"} <= set(fields(exc))
+    assert any(f.startswith("demographics.sex") for f in fields(exc))
+
+
+@pytest.mark.parametrize("fullwidth", ["２０２０-０１-０１", "٢٠٢٠-01-01"])
+def test_date_strings_must_use_ascii_digits(fullwidth):
+    data = reference()
+    data["index_event"]["date_range"] = {"start": fullwidth}
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert fields(exc)["index_event.date_range.start"] == "must be a date in YYYY-MM-DD format"
