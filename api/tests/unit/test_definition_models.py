@@ -275,7 +275,8 @@ def test_unknown_fields_are_rejected_so_typos_cannot_silently_drop_a_criterion()
     with pytest.raises(DefinitionError) as exc:
         parse_definition(data)
     errors = fields(exc)
-    assert "demographics.age_mn" in errors and "rules.0.inclde_descendants" in errors
+    # the typo'd key itself is user text and is masked; the parent path still locates the problem
+    assert "demographics.<unknown field>" in errors and "rules.0.<unknown field>" in errors
 
 
 def test_all_errors_are_reported_at_once():
