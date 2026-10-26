@@ -1,7 +1,8 @@
 import os
 
-from alembic import context
 from sqlalchemy import create_engine, pool
+
+from alembic import context
 
 config = context.config
 url = os.environ["DATABASE_URL_APP"].replace("postgresql://", "postgresql+psycopg://", 1)

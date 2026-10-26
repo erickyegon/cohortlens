@@ -6,8 +6,9 @@ Expand-only migration (expand-then-contract): creates tables, drops nothing.
 Schema app is provisioned by db/init/00-roles.sh.
 """
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0001"
 down_revision = None
