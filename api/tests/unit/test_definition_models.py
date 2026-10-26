@@ -42,10 +42,20 @@ def fields(exc_info):
 def test_reference_cohort_from_the_spec_is_expressible():
     definition = parse_definition(reference())
     assert isinstance(definition, CohortDefinition)
+    assert definition.index_event.domain == "drug"
     assert definition.index_event.concept_ids == [1308216]
-    assert [r.type for r in definition.rules] == ["exclude", "include", "exclude"]
-    assert definition.rules[1].window.start_days == ANY_TIME_BEFORE
+    assert definition.index_event.include_descendants and definition.index_event.first_occurrence_only
     assert definition.demographics.age_min == 50 and definition.demographics.age_max is None
+    assert definition.demographics.sex == ["F", "M"]
+    assert definition.observation.prior_days == 365 and definition.observation.post_days == 0
+    washout, hypertension, heart_failure = definition.rules
+    assert (washout.type, washout.domain, washout.concept_ids) == ("exclude", "drug", [21601784])
+    assert (washout.window.start_days, washout.window.end_days) == (-365, -1)
+    assert (hypertension.type, hypertension.domain, hypertension.concept_ids) == ("include", "condition", [320128])
+    assert (hypertension.window.start_days, hypertension.window.end_days) == (ANY_TIME_BEFORE, 0)
+    assert (heart_failure.type, heart_failure.concept_ids) == ("exclude", [316139])
+    assert (heart_failure.window.start_days, heart_failure.window.end_days) == (ANY_TIME_BEFORE, -1)
+    assert all(r.include_descendants and r.min_occurrences == 1 for r in definition.rules)
 
 
 def test_definition_round_trips_through_json():
@@ -76,7 +86,7 @@ def test_duplicate_concept_ids_are_collapsed_in_order():
     assert parse_definition(data).index_event.concept_ids == [3, 1, 2]
 
 
-def test_ten_rules_are_allowed_and_eleven_are_not():
+def test_ten_rules_are_allowed():
     assert MAX_RULES == 10
     ok = {**reference(), "rules": [rule(label=f"r{i}") for i in range(10)]}
     assert len(parse_definition(ok).rules) == 10
@@ -139,8 +149,10 @@ def test_eleven_rules_fail():
 def test_validation_has_no_database_dependency_so_no_sql_can_run():
     """Validation must be import-only pure Python: importing the model module never loads a database driver."""
     code = ("import sys; import app.cohort_engine.models; "
-            "bad = [m for m in ('sqlalchemy', 'psycopg', 'psycopg2') if m in sys.modules]; "
-            "sys.exit(1 if bad else 0)")
+            "assert 'pydantic' in sys.modules; "
+            "banned = ('sqlalchemy', 'psycopg', 'psycopg2', 'asyncpg', 'pg8000'); "
+            "bad = [m for m in sys.modules if m.split('.')[0] in banned or m.startswith('app.db')]; "
+            "print(bad); sys.exit(1 if bad else 0)")
     result = subprocess.run([sys.executable, "-c", code], cwd=API_DIR, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
@@ -292,3 +304,112 @@ def test_error_messages_do_not_echo_submitted_values():
         parse_definition(data)
     text = json.dumps(exc.value.errors)
     assert "SECRET-NAME-MARKER" not in text and "PRIVATE-LABEL-MARKER" not in text
+
+
+# ---- review round 1 on PR #34 -------------------------------------------------------------------------------
+
+def test_unknown_keys_are_reported_without_echoing_them():
+    """The key itself is user text: it must never reach the error (logs, telemetry, responses)."""
+    marker = "zzSECRET\x1b[31m\n"
+    data = reference()
+    data[marker] = 1
+    data["rules"][1]["window"][marker] = 2
+    data["demographics"][marker + "b"] = 3
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert "zzSECRET" not in json.dumps(exc.value.errors) and "zzSECRET" not in str(exc.value)
+    assert {"<unknown field>", "rules.1.window.<unknown field>", "demographics.<unknown field>"} <= set(fields(exc))
+
+
+def test_non_string_keys_are_reported_without_echoing_them():
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition({"name": "x", "index_event": {"domain": "drug", "concept_ids": [1]}, 12345: "v"})
+    assert "12345" not in json.dumps(exc.value.errors)
+
+
+def test_concept_ids_fit_a_postgres_integer():
+    data = reference()
+    data["index_event"]["concept_ids"] = [2_147_483_647]
+    parse_definition(data)
+    for too_big in (2_147_483_648, 2**80):
+        data["index_event"]["concept_ids"] = [too_big]
+        with pytest.raises(DefinitionError) as exc:
+            parse_definition(data)
+        assert any(f.startswith("index_event.concept_ids") for f in fields(exc))
+
+
+def test_too_many_rules_does_not_hide_the_other_errors():
+    data = {**reference(), "rules": [rule(label=f"r{i}", concept_ids=[]) for i in range(11)]}
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    errors = fields(exc)
+    assert "rules" in errors and "rules.0.concept_ids" in errors and "rules.10.concept_ids" in errors
+
+
+@pytest.mark.parametrize("flag", ["yes", "no", "on", "1", 1, 0, "true", None])
+def test_boolean_flags_are_strict(flag):
+    data = reference()
+    data["index_event"]["include_descendants"] = flag
+    data["rules"][0]["include_descendants"] = flag
+    data["index_event"]["first_occurrence_only"] = flag
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    expected = {"index_event.include_descendants", "rules.0.include_descendants", "index_event.first_occurrence_only"}
+    assert expected <= set(fields(exc))
+
+
+@pytest.mark.parametrize("bad", [0, 86400, "2020-01-01T00:00:00", "01/02/2020", "2020-1-1", "0001-01-01",
+                                 "9999-12-31", "1899-12-31", "2101-01-01"])
+def test_date_range_accepts_only_plausible_iso_dates(bad):
+    data = reference()
+    data["index_event"]["date_range"] = {"start": bad}
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert "index_event.date_range.start" in fields(exc)
+
+
+def test_date_range_accepts_iso_dates_at_the_limits():
+    data = reference()
+    data["index_event"]["date_range"] = {"start": "1900-01-01", "end": "2100-12-31"}
+    parse_definition(data)
+
+
+CONTROL_TEXT = ["a\x00b", "x\r\ny", "\u202e", "  \u200b ", "tab\there", "\x1b[31m", "a\u2028b", "\ufeff"]
+
+
+@pytest.mark.parametrize("text", CONTROL_TEXT)
+def test_names_and_labels_reject_control_and_invisible_characters(text):
+    data = reference()
+    data["name"] = text
+    data["rules"] = [rule(label=text)]
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert {"name", "rules.0.label"} <= set(fields(exc))
+
+
+def test_names_and_labels_accept_ordinary_unicode_and_are_nfc_normalised():
+    data = reference()
+    data["name"] = "Hipertensi\u00f3n \u2013 dosis \u226550 mg"
+    data["rules"] = [rule(label="cafe\u0301")]  # 'e' + combining acute accent
+    definition = parse_definition(data)
+    assert definition.name == data["name"]
+    assert definition.rules[0].label == "caf\u00e9"
+
+
+def test_rule_labels_must_be_unique_ignoring_case():
+    data = reference()
+    data["rules"] = [rule(label="Heart failure"), rule(label="  heart FAILURE ")]
+    with pytest.raises(DefinitionError) as exc:
+        parse_definition(data)
+    assert "unique" in fields(exc)["rules"]
+    data["rules"] = [rule(label="Heart failure"), rule(label="Hypertension")]
+    parse_definition(data)
+
+
+def test_sex_and_rule_concept_ids_are_deduplicated():
+    data = reference()
+    data["demographics"] = {"sex": ["F", "F"]}
+    data["rules"] = [rule(concept_ids=[5, 5, 4, 5])]
+    definition = parse_definition(data)
+    assert definition.demographics.sex == ["F"]
+    assert definition.rules[0].concept_ids == [5, 4]
