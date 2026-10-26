@@ -4,13 +4,14 @@ up:
 	docker compose up --build
 
 test:
-	python -m pytest api/tests -q  # frontend (Vitest) joins this target when web tests exist
+	python -m pytest api/tests -q -rs  # frontend (Vitest) joins this target when web tests exist
 
 e2e:
 	@echo "TODO: Playwright (stretch)" && exit 1
 
 lint:
-	@echo "TODO: ruff + eslint (phase 2/3)" && exit 1
+	ruff check .
+	cd web && npm run lint && npx tsc --noEmit
 
 traffic:
 	k6 run loadgen/journey.js
