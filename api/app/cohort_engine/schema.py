@@ -2,7 +2,7 @@
 
 Only the columns the compiler uses are declared; the full DDL lives in data/etl/cdm_ddl.sql.
 """
-from sqlalchemy import Column, Date, Integer, MetaData, Table
+from sqlalchemy import Column, Date, Integer, MetaData, String, Table
 
 metadata = MetaData(schema="cdm")
 
@@ -43,6 +43,12 @@ concept_ancestor = Table(
     "concept_ancestor", metadata,
     Column("ancestor_concept_id", Integer, primary_key=True),
     Column("descendant_concept_id", Integer, primary_key=True),
+)
+
+concept = Table(
+    "concept", metadata,
+    Column("concept_id", Integer, primary_key=True),
+    Column("concept_name", String),
 )
 
 # domain -> (table, concept column, event date column)
