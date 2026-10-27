@@ -103,3 +103,33 @@ def test_concept_search_answers_hypertens_inside_the_typeahead_budget_on_the_see
     assert all("hypertens" in concept["name"].lower() for concept in results)
     assert any(concept["concept_id"] == 320128 for concept in results)  # Essential hypertension
     assert min(timings) < 0.5, timings
+
+
+def test_a_full_run_of_the_reference_cohort_on_the_seed_is_inside_the_latency_budget(monkeypatch):
+    """#12 criterion 1: counts for every step, suppression and the baseline within 3 s on the demo dataset (NFR-1).
+    This times `execute_run` (the database work) on the best of three runs; the endpoint adds only the definition
+    load and the run insert on the small app tables.
+    The step counts are the documented engine-order counts (920, 552, 552, 551, 489, 481)."""
+    import json
+    import time
+
+    from app.cohort_engine.models import parse_definition
+    from app.db import session
+    from app.runs import execute_run
+
+    reference = json.loads((pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "reference_cohort.json")
+                           .read_text(encoding="utf-8"))
+    monkeypatch.setenv("DATABASE_URL_READER", DSN)
+    session.reader_engine.cache_clear()
+    timings = []
+    for _ in range(3):  # the first run opens the connection
+        started = time.perf_counter()
+        outcome = execute_run(parse_definition(reference), 10_000)
+        timings.append(time.perf_counter() - started)
+    session.reader_engine().dispose()
+    session.reader_engine.cache_clear()
+    assert [step.persons for step in outcome.steps] == [920, 552, 552, 551, 489, 481]
+    assert outcome.final_count == 481
+    assert outcome.baseline.comorbidities[0].name == "Essential hypertension"
+    assert outcome.baseline.comorbidities[0].persons == 481
+    assert min(timings) < 3.0, timings

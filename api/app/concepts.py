@@ -6,9 +6,10 @@ definitions use them as ancestors. Results are `{concept_id, name, domain}` with
 model spells it. No patient-level data is touched.
 """
 from fastapi import APIRouter, Request
-from sqlalchemy import Column, Integer, MetaData, String, Table, case, func, select
+from sqlalchemy import case, func, select
 from starlette.concurrency import run_in_threadpool
 
+from app.cohort_engine.schema import concept
 from app.db.session import reader_engine
 from app.errors import error_response
 
@@ -19,16 +20,6 @@ MAX_QUERY_CHARS = 100
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
 SEARCHABLE_DOMAINS = {"condition": "Condition", "drug": "Drug"}  # request spelling -> vocabulary spelling
-
-concept = Table(
-    "concept", MetaData(schema="cdm"),
-    Column("concept_id", Integer, primary_key=True),
-    Column("concept_name", String),
-    Column("domain_id", String),
-    Column("standard_concept", String),
-    Column("invalid_reason", String),
-)
-
 
 def search_statement(needle: str, domains: list[str], limit: int):
     """Names containing `needle`, best first: prefix matches, then word starts, then anything else; shorter names
