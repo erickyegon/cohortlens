@@ -79,6 +79,8 @@ Details:
 - **Comorbidities**: conditions recorded **on or before the index date** (a condition on the index date counts, one after it does not), counted as distinct members, the ten most common first, ties broken by the lower concept id. The name comes from `cdm.concept` (`null` if the concept row is missing). The index condition itself is not excluded; for a hypertension cohort hypertension will lead the list, which is itself informative.
 - Suppression is applied after sorting, so the order reflects exact counts while the displayed cells are masked; a cell with fewer than 11 members shows `"<11"`.
 - Both statements go through the same statement timeout as the attrition counts (`CohortTimeout`).
+- **Known limitation: masked rows still name the condition.** A comorbidity row with a masked count (`"<11"`) still shows its concept id and name, so for a cohort of 10 or fewer members the list discloses which conditions the members have (up to ten), and the order reflects the exact counts. That is acceptable for synthetic data; with real data it would need row dropping, name hiding or a minimum cohort size. Subtracting the visible grid cells from an exact attrition total also reveals the sum of the masked cells (the differencing limitation described under small-cell suppression).
+- The `other` sex bucket exists for gender concepts other than female and male in the data; the definition model itself only allows `F` and `M`, so `other` people are always filtered out of cohorts today and the bucket is zero.
 
 ## Worked examples
 
