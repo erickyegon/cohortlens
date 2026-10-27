@@ -4,7 +4,8 @@ up:
 	docker compose up --build
 
 test:
-	python -m pytest api/tests -q -rs  # frontend (Vitest) joins this target when web tests exist
+	python -m pytest api/tests -q -rs
+	cd web && npm test
 
 e2e:
 	@echo "TODO: Playwright (stretch)" && exit 1
