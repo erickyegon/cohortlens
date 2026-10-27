@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import Connection, Integer, Select, bindparam, distinct, func, select, union_all
+from sqlalchemy import Connection, Integer, Row, Select, bindparam, distinct, func, select, union_all
 from sqlalchemy.exc import OperationalError
 
 from app.cohort_engine.compiler import CohortPlan
 from app.db.session import STATEMENT_TIMEOUT_MS
+
+QUERY_CANCELED = "57014"  # SQLSTATE of a statement cancelled by statement_timeout (or pg_cancel_backend)
 
 
 class CohortTimeout(Exception):
@@ -37,16 +39,17 @@ def count_statement(plan: CohortPlan) -> Select:
     return select(counts.c.position, counts.c.persons).order_by(counts.c.position)
 
 
-def run_statement(conn: Connection, statement: Select, timeout_ms: int = STATEMENT_TIMEOUT_MS):
+def run_statement(conn: Connection, statement: Select, timeout_ms: int = STATEMENT_TIMEOUT_MS) -> list[Row]:
     """Execute under a transaction-local statement timeout; a cancelled query raises `CohortTimeout`.
 
-    The caller owns the transaction; after a timeout it must roll back before reusing the connection (done here).
+    The caller owns the transaction. On a timeout this rolls the whole transaction back (PostgreSQL aborts it anyway),
+    which also discards any earlier uncommitted work on the connection; other database errors propagate unchanged.
     """
     try:
         conn.execute(select(func.set_config("statement_timeout", str(int(timeout_ms)), True)))
         return conn.execute(statement).fetchall()
     except OperationalError as error:
-        if type(error.orig).__name__ == "QueryCanceled":
+        if getattr(error.orig, "sqlstate", None) == QUERY_CANCELED:
             conn.rollback()
             raise CohortTimeout(f"cohort query exceeded {timeout_ms} ms") from None
         raise
