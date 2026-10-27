@@ -53,7 +53,17 @@ Details:
 - Step keys are what the code uses (`index`, `demographics`, `observation`, `rule_1` … `rule_N`); labels are display text only and never go into SQL.
 - **Occurrences** are records, not days: two exposures on the same day count as two. With `min_occurrences: 1` the rule is an `EXISTS` probe per index row; with more it is a correlated count.
 - **`first_occurrence_only` is applied before the observation filter.** OHDSI Circe does it the other way round (observation first, then the earliest event that satisfies it). We take the person's first event in `date_range` and then ask whether they were observed around it, which is what a new-user design means: a person whose first-ever exposure lacks a washout is not rescued by a later one.
-- Later issues add the counting query (#8) and the baseline (#10) on top of the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
+- The counting query (#8) is described under "Attrition counts" below; the baseline (#10) arrives later on top of the same chain. Note the engine reports its steps in chain order (index, demographics, observation, rules), which differs from the order of the SQL oracle in `data/etl/example_cohort.sql`; the final count is the same.
+
+
+## Attrition counts (`attrition.py`)
+
+`run_attrition(conn, plan, timeout_ms=10_000)` returns one `StepCount(key, label, persons)` per step, in chain order (`index`, `demographics`, `observation`, `rule_1` ... `rule_N`). It is **one statement**: `count_statement(plan)` unions a `COUNT(DISTINCT person_id)` per step over the plan's shared CTE chain, so every CTE is defined once and no step is recomputed. The position of each step is a bound parameter, and the statement returns only `(position, persons)`: no person-level row leaves the module.
+
+- **Counts are distinct persons** (a person with several index events counts once per step), and a step nobody reaches is reported as `0`, never omitted.
+- **Timeout**: the statement runs under a transaction-local `statement_timeout` (`set_config(..., true)` with a bound value, default 10 s, the same as the reader engine). When the database cancels it, `run_statement` rolls the transaction back and raises `CohortTimeout`; the run endpoint (#12) turns that into a run recorded with outcome `timeout`.
+- **Suppression is not applied here.** `StepCount.persons` is the exact number; small-cell masking (`"<11"`, #9) happens before anything reaches the API.
+- Truth-fixture values for the reference cohort, in engine order: 22, 21, 17, 15, 12, 10 (`test_attrition_counts.py`; the SQL oracle orders its steps differently but ends at 10).
 
 
 ## Worked examples
