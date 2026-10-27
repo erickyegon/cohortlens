@@ -46,11 +46,13 @@ def test_suppressing_an_empty_baseline_gives_an_empty_public_baseline():
     assert public.age_sex == () and public.comorbidities == ()
 
 
-def test_suppress_baseline_masks_cells_and_keeps_order_and_names():
+def test_suppress_baseline_masks_cells_and_omits_rare_comorbidities_keeping_order_and_names():
     public = suppress_baseline(Baseline(
         age_sex=(AgeSexCell("60-69", "F", 5), AgeSexCell("60-69", "M", 0), AgeSexCell("70-79", "F", 40)),
-        comorbidities=(ComorbidityCount(320128, "Essential hypertension", 9), ComorbidityCount(1, None, 12))))
+        comorbidities=(ComorbidityCount(320128, "Essential hypertension", 40), ComorbidityCount(5, "Rare", 10),
+                       ComorbidityCount(1, None, 11), ComorbidityCount(2, "Rarer", 9))))
     assert [(c.age_band, c.sex, c.persons) for c in public.age_sex] == [
         ("60-69", "F", "<11"), ("60-69", "M", 0), ("70-79", "F", 40)]
     assert [(c.concept_id, c.name, c.persons) for c in public.comorbidities] == [
-        (320128, "Essential hypertension", "<11"), (1, None, 12)]
+        (320128, "Essential hypertension", 40), (1, None, 11)]  # 10 and 9 are left out, not masked
+    assert public.comorbidity_note == "Conditions with fewer than 11 patients are not shown."
