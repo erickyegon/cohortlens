@@ -10,6 +10,7 @@ import pathlib
 
 import pytest
 from sqlalchemy import event, func, select
+from sqlalchemy.exc import OperationalError
 
 from app.cohort_engine.attrition import CohortTimeout, StepCount, run_attrition, run_statement
 from app.cohort_engine.compiler import build_plan
@@ -112,9 +113,16 @@ def test_the_timeout_applies_to_the_transaction_only_and_defaults_to_ten_seconds
     with truth_engine.connect() as conn:
         before = conn.exec_driver_sql("show statement_timeout").scalar()
         run_attrition(conn, build_plan(definition()), timeout_ms=1234)
-        conn.rollback()
+        conn.commit()  # a session-level SET would survive this; a transaction-local one must not
         assert conn.exec_driver_sql("show statement_timeout").scalar() == before
 
+
+def test_an_operational_error_that_is_not_a_timeout_propagates_as_itself(truth_engine):
+    # the backend is terminated mid-statement (SQLSTATE 57P01): a lost connection must not be reported as a timeout
+    with truth_engine.connect() as conn:
+        with pytest.raises(OperationalError) as caught:
+            run_statement(conn, select(func.pg_terminate_backend(func.pg_backend_pid())), timeout_ms=5000)
+    assert not isinstance(caught.value, CohortTimeout)
 
 # ---- aggregates only ----------------------------------------------------------------------------------------------
 
