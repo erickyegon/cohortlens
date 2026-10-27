@@ -2,6 +2,8 @@
 
 The change is to the plan only; results must not change (see test_occurrence_early_exit.py and the seed test).
 """
+import re
+
 from sqlalchemy.dialects import postgresql
 
 from app.cohort_engine.compiler import build_plan
@@ -17,10 +19,16 @@ def sql_of(min_occurrences):
     return str(compiled), compiled.params
 
 
+def limit_value(sql, params):
+    """The value bound to the LIMIT placeholder (None if there is no LIMIT)."""
+    match = re.search(r"LIMIT %\((\w+)\)s", sql)
+    return params[match.group(1)] if match else None
+
+
 def test_a_rule_needing_several_occurrences_counts_at_most_that_many_records():
-    sql, params = sql_of(3)
-    assert "LIMIT" in sql.upper()
-    assert 3 in params.values()  # the limit is a bound parameter equal to min_occurrences, not text in the SQL
+    for k in (2, 3, 7):
+        sql, params = sql_of(k)
+        assert limit_value(sql, params) == k  # exactly k: k-1 would undercount, k+1 would do needless work
 
 
 def test_the_limit_is_a_bound_parameter_never_part_of_the_sql_text():

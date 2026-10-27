@@ -126,7 +126,7 @@ Measured on the committed seed (5,724 persons, the production indexes, `ANALYZE`
 | Definition | Before | After |
 |---|---|---|
 | Reference cohort (6 steps) | 0.05 s | 0.04 s |
-| 10 rules, `min_occurrences: 1`, broad concepts, first occurrence only | 1.0 s | 0.6 s |
+| 10 rules, `min_occurrences: 1`, broad concepts, first occurrence only | 1.0 s | 0.6 s (same plan before and after; run-to-run noise) |
 | 10 rules, `min_occurrences: 2`, broad concepts, first occurrence only | 6.2-8.8 s | **0.7 s** |
 | 10 rules, `min_occurrences: 1`, every exposure an index event (266k index rows) | 16.7 s | 12.7 s (unchanged plan; run-to-run noise) |
 | 10 rules, `min_occurrences: 2`, every exposure an index event | over 60 s (cancelled) | 20.9 s |
@@ -140,5 +140,11 @@ Measured on the committed seed (5,724 persons, the production indexes, `ANALYZE`
 
 ### Still open: every exposure as an index event
 
-With `first_occurrence_only: false` and a broad index concept every exposure becomes an index row (about 266k here), and each of the 10 rules is probed per row: roughly 2.7 million probes at about 5 microseconds each, 13-21 s whatever the occurrence rule, so the 10 s statement timeout cancels it. This cannot be fixed by changing the plan without changing semantics (windows are per index row). Issue #37 allows rejecting such a definition before it runs with a clear field-level message; the choice of rule (a static cap on rules when `first_occurrence_only` is false, or a pre-flight estimate of index rows times rules) is a product decision and is not made here.
+With `first_occurrence_only: false` and a broad index concept every exposure becomes an index row (about 266k here), and each of the 10 rules is probed per row: roughly 2.7 million probes, 9-21 s depending on the machine, so the 10 s statement timeout can cancel it. Windows are per index row, so the semantics cannot change; what plan-level changes can do was measured:
 
+- `min_occurrences: 1`: `SET enable_nestloop = off` took the case from 9.1 s to 1.0 s on a reviewer's machine. That is a **lead, not adopted**: it is a session setting that would need to be applied (and tested) on the read-only connection, and it is not a documented guarantee of a better plan for other shapes.
+- `min_occurrences: 2`: the same setting made it worse (12.7 s to 25 s); larger `work_mem` and `jit = off` changed nothing. This case stays above the timeout.
+
+Issue #37 allows rejecting such a definition before it runs with a clear field-level message. The choice of rule (a static cap on rules when `first_occurrence_only` is false, or a pre-flight estimate of index rows times rules, which is more precise) is a product decision and is not made here.
+
+Note on the tests: on a fast machine the pre-change compiler also stays under 3 s for the first-occurrence worst case (2.7 s was measured on one), so `test_seed_engine_performance.py` is a regression guard with about 5x margin on the current code, not proof that the change was needed; the 6-9 s figures above are from the author's laptop.
