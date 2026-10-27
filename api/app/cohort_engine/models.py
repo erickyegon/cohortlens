@@ -25,6 +25,7 @@ from pydantic import (
 )
 
 MAX_RULES = 10
+MAX_RULES_ALL_EVENTS = 3  # rule cap when first_occurrence_only is false (every exposure is an index row, #37)
 MAX_AGE = 130
 MAX_CONCEPT_ID = 2_147_483_647  # OMOP concept_id is a Postgres integer
 MIN_DATE = dt.date(1900, 1, 1)
@@ -240,17 +241,51 @@ def _field_errors(exc: ValidationError, prefix: tuple = ()) -> list[dict[str, st
 def parse_definition(raw: Any) -> CohortDefinition:
     """Validate raw JSON data (a dict) and return the typed definition, or raise `DefinitionError`.
 
-    `from None` is deliberate: the chained pydantic error carries the submitted input values.
+    Besides the field rules this applies the cost cap for definitions where every exposure is an index event
+    (`_all_events_errors`). `from None` is deliberate: the chained pydantic error carries the submitted input values.
     """
     if not isinstance(raw, dict):
         raise DefinitionError([{"field": "", "message": "A cohort definition must be a JSON object"}])
     rules = raw.get("rules")
+    definition: CohortDefinition | None = None
     if isinstance(rules, list) and len(rules) > MAX_RULES:
-        raise DefinitionError(_errors_for_too_many_rules(raw, rules))
-    try:
-        return CohortDefinition.model_validate(raw)
-    except ValidationError as exc:
-        raise DefinitionError(_field_errors(exc)) from None
+        errors = _errors_for_too_many_rules(raw, rules)
+    else:
+        try:
+            definition, errors = CohortDefinition.model_validate(raw), []
+        except ValidationError as exc:
+            errors = _field_errors(exc)
+    reported = {e["field"] for e in errors}
+    errors += [e for e in _all_events_errors(raw) if e["field"] not in reported]
+    if errors:
+        raise DefinitionError(errors)
+    assert definition is not None
+    return definition
+
+
+def _all_events_errors(raw: dict) -> list[dict[str, str]]:
+    """Cost cap for `first_occurrence_only: false` (every matching record becomes an index row, and each rule is probed
+    once per row, so many rules or occurrence counts can outrun the 10 s statement timeout): at most
+    `MAX_RULES_ALL_EVENTS` rules, each with `min_occurrences` 1. Works on the raw data so that these errors arrive in
+    the same round as the other field errors; a non-boolean flag is left to the strict type check, and messages never
+    echo submitted values.
+    """
+    index = raw.get("index_event")
+    if not isinstance(index, dict) or index.get("first_occurrence_only") is not False:
+        return []
+    rules = raw.get("rules")
+    if not isinstance(rules, list):
+        return []
+    errors = []
+    if len(rules) > MAX_RULES_ALL_EVENTS:
+        errors.append({"field": "rules", "message": (
+            f"With first_occurrence_only false a cohort can have at most {MAX_RULES_ALL_EVENTS} rules")})
+    for position, rule in enumerate(rules):
+        occurrences = rule.get("min_occurrences") if isinstance(rule, dict) else None
+        if isinstance(occurrences, int) and not isinstance(occurrences, bool) and occurrences != 1:
+            errors.append({"field": f"rules.{position}.min_occurrences", "message": (
+                "With first_occurrence_only false every rule must have min_occurrences 1")})
+    return errors
 
 
 def _errors_for_too_many_rules(raw: dict, rules: list) -> list[dict[str, str]]:
