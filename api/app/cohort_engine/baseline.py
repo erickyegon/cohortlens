@@ -2,8 +2,8 @@
 
 The cohort members are the persons of the plan's last step, each taken once at their earliest surviving index date.
 Two aggregate statements run over that set; person-level rows exist only inside the SQL. `run_baseline` returns exact
-counts for internal use; everything that leaves the API goes through `suppress_baseline`, which masks cells of 1 to
-10 as "<11" (`suppression.suppress_count`).
+counts for internal use; everything that leaves the API goes through `suppress_baseline`, which masks age/sex cells of
+1 to 10 as "<11" (`suppression.suppress_count`) and leaves comorbidities with fewer than 11 patients out entirely.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from sqlalchemy import CTE, Connection, Select, and_, case, distinct, func, sele
 from app.cohort_engine.attrition import run_statement
 from app.cohort_engine.compiler import CohortPlan, age_at
 from app.cohort_engine.schema import GENDER_CONCEPT, concept, condition_occurrence, person
-from app.cohort_engine.suppression import suppress_count
+from app.cohort_engine.suppression import SMALL_CELL_THRESHOLD, suppress_count
 from app.db.session import STATEMENT_TIMEOUT_MS
 
 # (label, youngest, oldest); the last band is open-ended
@@ -24,6 +24,7 @@ AGE_BANDS: tuple[tuple[str, int, int | None], ...] = (
 )
 SEXES = ("F", "M", "other")  # "other" is any gender concept that is not female or male
 TOP_COMORBIDITIES = 10
+COMORBIDITY_NOTE = f"Conditions with fewer than {SMALL_CELL_THRESHOLD} patients are not shown."
 
 
 @dataclass(frozen=True)
@@ -57,13 +58,14 @@ class PublicAgeSexCell:
 class PublicComorbidity:
     concept_id: int
     name: str | None
-    persons: int | str
+    persons: int  # always an exact number of at least 11: rarer conditions are left out
 
 
 @dataclass(frozen=True)
 class PublicBaseline:
     age_sex: tuple[PublicAgeSexCell, ...]
     comorbidities: tuple[PublicComorbidity, ...]
+    comorbidity_note: str = COMORBIDITY_NOTE
 
 
 def members(plan: CohortPlan) -> CTE:
@@ -128,8 +130,13 @@ def run_baseline(conn: Connection, plan: CohortPlan, timeout_ms: int = STATEMENT
 
 
 def suppress_baseline(baseline: Baseline) -> PublicBaseline:
+    """Age/sex cells of 1 to 10 become "<11". Comorbidities with fewer than 11 patients are left out entirely (a
+    masked row would still name the condition); because the list is sorted by exact count, dropping them leaves the
+    top conditions among those with at least 11. The note is always returned, so its presence says nothing about the
+    cohort."""
     return PublicBaseline(
         age_sex=tuple(PublicAgeSexCell(c.age_band, c.sex, suppress_count(c.persons)) for c in baseline.age_sex),
-        comorbidities=tuple(PublicComorbidity(c.concept_id, c.name, suppress_count(c.persons))
-                            for c in baseline.comorbidities),
+        comorbidities=tuple(PublicComorbidity(c.concept_id, c.name, c.persons) for c in baseline.comorbidities
+                            if c.persons >= SMALL_CELL_THRESHOLD),
+        comorbidity_note=COMORBIDITY_NOTE,
     )
