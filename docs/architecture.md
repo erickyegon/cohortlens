@@ -87,6 +87,23 @@ Rules that apply to every route:
 - **Safety**: every value is a bound parameter and `%`, `_` and `\` in the query are matched literally.
 - **Speed**: 30 to 90 ms per search through the API on the 26k-concept seed once the connection is open (a sequential scan with a substring match; the worst case, a two-letter query at limit 50, is about 80 ms); the first request after start-up took about 350 ms in one measurement because it opens the connection. The 500 ms budget is enforced by a seed test (`make verify-seed`) on the best of three requests. A full OMOP vocabulary (millions of concepts) would need a trigram index (`pg_trgm`).
 
+## Frontend
+
+React 18 + Vite + TypeScript in `web/`, served by nginx, which proxies `/api` to the API (so there is no CORS and no API URL setting). It is deliberately minimal: working and tested, not polished. No router or UI library: `App.tsx` switches between views with state.
+
+| File | Role |
+|---|---|
+| `api.ts`, `types.ts` | Typed client for the routes in the API section; an `ApiError` carries the status, the field errors and the trace id (from the body, or the `X-Trace-Id` header) |
+| `form.ts` | The builder's editing state (numbers as text while typing), conversion to and from the API definition, client-side validation keyed by the API's dotted field paths, `moveRule` |
+| `CohortList.tsx` | Saved cohorts with the last run's count (a suppressed count shows as `<11`) and time (fixed `YYYY-MM-DD HH:MM UTC` format), open and new |
+| `Builder.tsx`, `ConceptPicker.tsx` | The builder: index event with concept typeahead, demographics, observation window, up to 10 rules that can be reordered, toggled include/exclude and removed; saves with `POST` (new) or `PUT` (existing) |
+
+Behaviour worth knowing:
+
+- **Validation.** The form mirrors the cheap server rules (age order, windows, required fields, the rule cap and the all-events cap) so the user sees a field-level message before saving, and **Save does nothing while a field has an error**. Whatever the server still rejects (`422`) is shown on the matching field by the same dotted path. A failure with a trace id is shown as `Something went wrong. Reference: <trace id>` (FR-12).
+- **Reopening** restores every field. The API stores concept ids only, so a concept chosen in an earlier session is shown as `Concept <id>`; one picked in this session shows its name.
+- **Tests.** Vitest + Testing Library with a stubbed `fetch` (`src/test-utils.ts`); `make test` and the CI `test` job run them. Browser end-to-end tests (Playwright, `make e2e`) are a separate, later item.
+
 ## Data
 
 - `cdm`: nine OMOP tables (person, observation_period, visit_occurrence, condition_occurrence, drug_exposure, measurement, death, concept, concept_ancestor). Source and decision: `docs/adr/001-omop-subset-over-custom-schema.md`. Schema DDL: `data/etl/cdm_ddl.sql` (added in the truth-fixture PR, #28).
