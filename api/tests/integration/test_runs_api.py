@@ -158,9 +158,8 @@ def test_when_the_app_database_is_down_the_run_is_a_503_with_a_reference_and_not
 # ---- timeouts: a clear message, and the run is recorded as a timeout -----------------------------------------------
 
 def test_a_run_over_the_statement_timeout_is_cancelled_and_reported_with_a_clear_message(client, api_env, monkeypatch):
-    import app.runs as runs
-
     import app.cohort_engine.attrition as attrition
+    import app.runs as runs
 
     cohort_id = save(client)
     monkeypatch.setattr(attrition, "count_statement", lambda plan: select(func.pg_sleep(5)))  # a genuinely slow query
@@ -177,7 +176,6 @@ def test_a_run_over_the_statement_timeout_is_cancelled_and_reported_with_a_clear
 
 def test_the_timeout_message_names_the_ten_second_limit_and_says_what_to_try(client, monkeypatch):
     import app.runs as runs
-
     from app.cohort_engine.attrition import CohortTimeout
 
     def too_slow(*args, **kwargs):
@@ -192,7 +190,6 @@ def test_the_timeout_message_names_the_ten_second_limit_and_says_what_to_try(cli
 
 def test_a_timeout_is_logged_with_the_trace_id_and_no_data(client, monkeypatch, caplog):
     import app.runs as runs
-
     from app.cohort_engine.attrition import CohortTimeout
 
     monkeypatch.setattr(runs, "execute_run", lambda *a, **k: (_ for _ in ()).throw(CohortTimeout("exceeded")))
@@ -236,7 +233,6 @@ def test_three_runs_are_listed_newest_first(client):
 
 def test_the_history_includes_failed_and_timed_out_runs_with_their_status(client, monkeypatch):
     import app.runs as runs
-
     from app.cohort_engine.attrition import CohortTimeout
 
     cohort_id = save(client, INDEX_ONLY)
