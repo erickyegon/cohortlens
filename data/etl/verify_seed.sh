@@ -17,4 +17,4 @@ docker exec -i "$NAME" psql -U postgres -d cohortlens < data/etl/example_cohort.
 
 PORT=$(docker port "$NAME" 5432/tcp | head -1 | sed "s/.*://")
 export COHORTLENS_TEST_DSN="postgresql://postgres:verify@127.0.0.1:$PORT/cohortlens"
-python -m pytest api/tests/integration/test_seed_example_cohort.py -q
+python -m pytest api/tests/integration/test_seed_example_cohort.py api/tests/integration/test_seed_engine_performance.py -q

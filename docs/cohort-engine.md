@@ -66,6 +66,24 @@ Details:
 - Truth-fixture values for the reference cohort, in engine order: 22, 21, 17, 15, 12, 10 (`test_attrition_counts.py`; the SQL oracle orders its steps differently but ends at 10).
 
 
+## Small-cell suppression (`suppression.py`)
+
+`suppress_count(n)` returns `0` for 0, the string `"<11"` for 1 to 10, and the exact number for 11 or more (`SMALL_CELL_THRESHOLD = 11`). `suppress_steps(step_counts)` turns the engine's exact `StepCount` list into `PublicStepCount(key, label, persons)`, the only shape the API may return for a waterfall; it has no person-level field. The module is pure logic (a test forbids database imports), and it rejects negative numbers (`ValueError`) and non-integers, booleans included (`TypeError`), rather than guess.
+
+- **Exact counts never leave the engine.** `StepCount` is internal; the run endpoint (#12) and the baseline (#10) must pass everything through this module before serialising.
+- **Known limitation: differencing.** When two adjacent steps are both 11 or more, their exact difference (the number a rule removed) can be 1 to 10 and is visible by subtraction. Masking each count is the rule the spec asks for (NFR-4); hiding derived differences would need complementary suppression, which is out of scope here and is a documented limitation for a synthetic-data demo.
+
+## Baseline table (`baseline.py`)
+
+`run_baseline(conn, plan, timeout_ms=10_000)` runs two aggregate statements over the final cohort (the plan's last step; each person once, at their **earliest surviving index date**) and returns an exact `Baseline`; `suppress_baseline` turns it into the `PublicBaseline` the API may return: every age/sex cell passes through `suppress_count` (1 to 10 become `"<11"`, 0 stays 0), and comorbidities with fewer than 11 patients are **left out entirely**, with a constant `comorbidity_note` ("Conditions with fewer than 11 patients are not shown.").
+
+- **Age and sex**: age at the index date (same `age_at` rule as the demographics step) in the bands `0-17, 18-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80+`, by sex `F`, `M` or `other` (any other gender concept). The grid is always complete, 8 bands by 3 sexes, with `0` for empty cells so the UI layout is stable. Persons are classified in a subquery and then grouped: person-level rows never leave the database.
+- **Comorbidities**: conditions recorded **on or before the index date** (a condition on the index date counts, one after it does not), counted as distinct members, the ten most common first, ties broken by the lower concept id. The name comes from `cdm.concept` (`null` if the concept row is missing). The index condition itself is not excluded; for a hypertension cohort hypertension will lead the list, which is itself informative.
+- Comorbidities are sorted by exact count and then those under 11 are dropped, which leaves the top conditions among those with at least 11 (a shown row always has an exact count of 11 or more, and the list can be shorter than ten or empty). The note is returned every time, so its presence says nothing about the cohort.
+- Both statements go through the same statement timeout as the attrition counts (`CohortTimeout`).
+- **Rare conditions are not named.** A condition with fewer than 11 patients is never listed (decision of the product owner, replacing an earlier design that showed masked rows), so a small cohort cannot be profiled through its comorbidity list. Remaining limitations (differencing): subtracting the visible age/sex cells from an exact attrition total still reveals the sum of the masked cells (described under small-cell suppression), and a shown exact comorbidity count against an exact cohort size reveals how many members lack that condition (a complement of 1 to 10 is possible in a small cohort of 11 or more).
+- The `other` sex bucket exists for gender concepts other than female and male in the data; the definition model itself only allows `F` and `M`, so `other` people are always filtered out of cohorts today and the bucket is zero.
+
 ## Worked examples
 
 Counts below are from the demo dataset (5,724 synthetic persons) and are unsuppressed because this is a development document about synthetic data; the API applies `"<11"` suppression. The SQL for the reference cohort is `data/etl/example_cohort.sql`.
@@ -105,15 +123,27 @@ Anchoring on first hypertension diagnosis with a 30-day lisinopril start window 
 
 ## Performance (measured)
 
-Measured on the committed seed (5,724 persons, production indexes) in PostgreSQL 16, one statement per cohort:
+Measured on the committed seed (5,724 persons, the production indexes, `ANALYZE` run by the seed) in PostgreSQL 16 in Docker on a developer laptop, with **every step counted in one statement** (`run_attrition`), median of three runs unless noted. "Broad concepts" are "Oral Product" (36217214, drugs) and "Clinical finding" (441840, conditions); the 10 rules alternate between them with a window of +-100 years. Absolute times depend on the machine; the ratios are what matter. `test_seed_engine_performance.py` enforces the first three rows against the seed (`make verify-seed`).
 
-| Definition | Last step | Every step counted in one statement |
+| Definition | Before | After |
 |---|---|---|
-| Reference cohort (6 steps) | 0.07 s | 0.03 s |
-| 10 rules, `min_occurrences: 1`, broad concepts (an "Oral Product" drug class, "Clinical finding") | 0.2 s | 0.4 s |
-| 10 rules, `min_occurrences: 2`, broad concepts | **4.4 s** | 2.5 s |
-| 10 rules, `min_occurrences: 1`, every exposure an index event (about 266k index rows) | 2.6 s | **8.8 s** |
-| 10 rules, `min_occurrences: 2`, every exposure an index event | **over 40 s** | over 40 s |
+| Reference cohort (6 steps) | 0.05 s | 0.04 s |
+| 10 rules, `min_occurrences: 1`, broad concepts, first occurrence only | 1.0 s | 0.6 s (same plan before and after; run-to-run noise) |
+| 10 rules, `min_occurrences: 2`, broad concepts, first occurrence only | 6.2-8.8 s | **0.7 s** |
+| 10 rules, `min_occurrences: 1`, every exposure an index event (266k index rows) | 16.7 s | 12.7 s (unchanged plan; run-to-run noise) |
+| 10 rules, `min_occurrences: 2`, every exposure an index event | over 60 s (cancelled) | 20.9 s |
 
-Realistic cohorts are far inside the 3 s p95 target (NFR-1); the bold cases are contrived but the model allows them, and the 10 s statement timeout is what protects the database. Cause: each `min_occurrences > 1` rule is a correlated `count(*)` per index row, and the planner underestimates the filtered rows and picks quadratic nested loops. Tried and rejected: a set-based `GROUP BY ... HAVING` join (the first case went from 4.4 s to over 40 s, the fourth from 2.6 s to 5.1 s), and `MATERIALIZED` CTEs (helps the third case, makes the fourth about 3.5 times slower). Tracked in issue #37.
+### Diagnosis (issue #37)
 
+1. **Statistics and indexes are fine.** The seed ends with `ANALYZE;` (every `cdm` table shows `last_analyze` after a load) and all composite indexes exist. They are not what the plan uses for broad concepts: `EXPLAIN (ANALYZE, BUFFERS)` shows each rule probing `idx_drug_person` / `idx_condition_person` (person only), because a correlated look-up by person is far more selective than a look-up by a broad concept. The composite `(concept, person, date)` indexes serve narrow concepts and the concept search.
+2. **Where the time goes.** For each rule the planner estimates one row per probe, then, for each of the ~5.4k index rows, fetches the person's ~50 records and probes `concept_ancestor` once per record (266,581 probes in one rule) before `count(*)` is compared with `min_occurrences`. 10 rules cost about 4.6 s in the plan.
+3. **Expanding each rule's concept set once did not help.** A `MATERIALIZED` CTE per rule made the worst case 40 s (a nested loop against an unindexed CTE scan); a one-time `= ANY(array)` sub-select made it 35 s (the planner cannot hash a non-constant array); resolving the descendants in a separate query and passing a bound list got to 2.5 s but needs database access at compile time, so it was not adopted. A person-leading covering index `(person_id, concept, date)` made no difference (7.8 s) and was not added.
+4. **What worked: stop counting at `min_occurrences`.** A rule needing k occurrences only has to know whether there are at least k, so the correlated count is taken over at most k matching records (`SELECT person_id ... LIMIT k`, k a bound parameter) instead of all of them. Results are identical (the truth-fixture tests are unchanged, and `test_occurrence_early_exit.py` pins the k-1 / k / more boundaries and that one person's records never satisfy another's rule); only the plan changes. `min_occurrences: 1` was already a plain `EXISTS` probe.
+
+### Every exposure as an index event: capped, and the timeout is the backstop
+
+With `first_occurrence_only: false` and a broad index concept every exposure becomes an index row (145,970 for the broad "Oral Product" class, 266,740 for every drug exposure on the demo seed), and each rule is probed once per row: a 10-rule cohort is roughly 2.7 million probes, 9-21 s depending on the machine. Windows are per index row, so the semantics cannot change. Decision (product owner, issue #37): `parse_definition` allows at most 3 rules, each with `min_occurrences` 1, when `first_occurrence_only` is false (see the definition model above); no further cap is planned. The 10 s statement timeout is the backstop: a run that exceeds it is cancelled and reported to the user as a timeout with a clear message (the run endpoint, #12).
+
+Not adopted, for the record: `SET enable_nestloop = off` took the `min_occurrences: 1` every-exposure case from 9.1 s to 1.0 s on a reviewer's machine, but made `min_occurrences: 2` worse (12.7 s to 25 s); `work_mem` and `jit = off` changed nothing.
+
+Note on the tests: on a fast machine the pre-change compiler also stays under 3 s for the first-occurrence worst case (2.7 s was measured on one), so `test_seed_engine_performance.py` is a regression guard with about 5x margin on the current code, not proof that the change was needed; the 6-9 s figures above are from the author's laptop.
