@@ -72,7 +72,7 @@ def test_a_name_that_looks_like_sql_is_stored_verbatim(client, api_env):
     assert stored_count(api_env) == 1
 
 
-# ---- Given a saved cohort, when I PUT it, then version increases by 1 -------------------------------------------------
+# ---- Given a saved cohort, when I PUT it, then version increases by 1 ---------------------------------------------
 
 def test_updating_a_cohort_increases_its_version_by_one_each_time(client):
     created = create(client)
@@ -98,7 +98,7 @@ def test_updating_an_unknown_cohort_is_a_404_and_creates_nothing(client, api_env
     assert response.status_code == 404 and stored_count(api_env) == 0
 
 
-# ---- Given an invalid definition, then a 422 with field-level errors is returned and nothing is stored ----------------
+# ---- Given an invalid definition, then a 422 with field-level errors is returned and nothing is stored ------------
 
 def test_an_invalid_new_definition_gets_a_422_with_field_level_errors_and_is_not_stored(client, api_env):
     bad = definition(demographics={"age_min": 80, "age_max": 40})
