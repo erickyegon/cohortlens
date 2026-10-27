@@ -71,6 +71,15 @@ Details:
 - **Exact counts never leave the engine.** `StepCount` is internal; the run endpoint (#12) and the baseline (#10) must pass everything through this module before serialising.
 - **Known limitation: differencing.** When two adjacent steps are both 11 or more, their exact difference (the number a rule removed) can be 1 to 10 and is visible by subtraction. Masking each count is the rule the spec asks for (NFR-4); hiding derived differences would need complementary suppression, which is out of scope here and is a documented limitation for a synthetic-data demo.
 
+## Baseline table (`baseline.py`)
+
+`run_baseline(conn, plan, timeout_ms=10_000)` runs two aggregate statements over the final cohort (the plan's last step; each person once, at their **earliest surviving index date**) and returns an exact `Baseline`; `suppress_baseline` turns it into the `PublicBaseline` the API may return, with every cell passed through `suppress_count` (1 to 10 become `"<11"`, 0 stays 0).
+
+- **Age and sex**: age at the index date (same `age_at` rule as the demographics step) in the bands `0-17, 18-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80+`, by sex `F`, `M` or `other` (any other gender concept). The grid is always complete, 8 bands by 3 sexes, with `0` for empty cells so the UI layout is stable. Persons are classified in a subquery and then grouped: person-level rows never leave the database.
+- **Comorbidities**: conditions recorded **on or before the index date** (a condition on the index date counts, one after it does not), counted as distinct members, the ten most common first, ties broken by the lower concept id. The name comes from `cdm.concept` (`null` if the concept row is missing). The index condition itself is not excluded; for a hypertension cohort hypertension will lead the list, which is itself informative.
+- Suppression is applied after sorting, so the order reflects exact counts while the displayed cells are masked; a cell with fewer than 11 members shows `"<11"`.
+- Both statements go through the same statement timeout as the attrition counts (`CohortTimeout`).
+
 ## Worked examples
 
 Counts below are from the demo dataset (5,724 synthetic persons) and are unsuppressed because this is a development document about synthetic data; the API applies `"<11"` suppression. The SQL for the reference cohort is `data/etl/example_cohort.sql`.

@@ -6,8 +6,7 @@ from sqlalchemy import Table
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import visitors
 
-from app.cohort_engine.baseline import (
-    AgeSexCell, Baseline, ComorbidityCount, baseline_statements, suppress_baseline)
+from app.cohort_engine.baseline import AgeSexCell, Baseline, ComorbidityCount, baseline_statements, suppress_baseline
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
 

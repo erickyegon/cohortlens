@@ -16,8 +16,7 @@ import pathlib
 
 from sqlalchemy import text
 
-from app.cohort_engine.baseline import (
-    AGE_BANDS, SEXES, Baseline, PublicBaseline, run_baseline, suppress_baseline)
+from app.cohort_engine.baseline import AGE_BANDS, SEXES, Baseline, PublicBaseline, run_baseline, suppress_baseline
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
 
