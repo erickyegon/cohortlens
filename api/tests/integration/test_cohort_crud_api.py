@@ -159,7 +159,9 @@ def test_listing_shows_summaries_most_recently_updated_first(client):
     client.put(f"/cohorts/{first['id']}", json=definition(name="First, edited"))
     listing = client.get("/cohorts").json()
     assert [c["name"] for c in listing] == ["First, edited", "Second"]
-    assert set(listing[0]) == {"id", "name", "version", "created_at", "updated_at"}  # no definition in the list
+    # no definition in the list; last_run (issue #12) is None until the cohort has been run
+    assert set(listing[0]) == {"id", "name", "version", "created_at", "updated_at", "last_run"}
+    assert listing[0]["last_run"] is None
     assert second["id"] == listing[1]["id"]
 
 
