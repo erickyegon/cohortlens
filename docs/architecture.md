@@ -61,8 +61,10 @@ Rules that apply to every route:
 - **Validation first.** The definition goes through `parse_definition` (docs/cohort-engine.md) before anything is stored, and the *validated, normalised* definition is what is saved. An invalid definition is a `422` and nothing is stored or changed.
 - **Error body.** `{"error": "<message>", "trace_id": "<32 hex>"}`, plus `"errors": [{"field": "rules.1.window.end_days", "message": "..."}]` for a `422`. The `trace_id` is the same value as the `X-Trace-Id` response header, which every response carries (FR-12). Messages never echo submitted values, and database or connection details never appear in a body.
 - **Not found.** An unknown id and a malformed id are both `404` (`Cohort not found`), never a `422` or a crash.
-- **Limits.** A request body over 256 KiB is a `413`, rejected while streaming, before it is parsed.
-- **Database down.** A database failure is a `503` with the trace reference; connections to an unreachable database give up after 5 seconds (`CONNECT_TIMEOUT_S`) so the user is not left waiting.
+- **Limits.** A request body over 256 KiB (exactly 262,144 bytes is accepted, one more is not) is a `413`, rejected while streaming, before it is parsed; this also holds for chunked bodies without a `Content-Length`.
+- **Database failures.** A connection-level failure (refused, timed out, shutting down, too many connections) is a `503` "The database is unavailable"; a statement or lock timeout is a `503` "The database took too long to respond"; any other database error (a bad statement, a missing table) is a plain `500`. Connections to an unreachable database give up after 5 seconds (`CONNECT_TIMEOUT_S`) so the user is not left waiting. No body ever contains connection details.
+- **Logging.** Every failure (a 500 or a database error) writes one log line `request failed exception=<class> trace_id=<id>`: the exception class and the trace id only, never the message, which can carry SQL, parameters, hosts or credentials (NFR-3). That is what lets support go from the reference a user quotes to the failure.
+- **Unknown routes and methods** use the same body (`{"error": "Not Found", "trace_id": ...}`).
 - Only definitions are handled here; no endpoint returns patient-level rows (FR-11).
 
 ## Request flow: Run feasibility _(planned: run endpoint issue)_
