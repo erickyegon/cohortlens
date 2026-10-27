@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import text
 
 from app.cohort_engine.compiler import build_plan
-from app.cohort_engine.models import parse_definition
+from app.cohort_engine.models import CohortDefinition, parse_definition
 
 FIXTURES = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
 REFERENCE = json.loads((FIXTURES / "reference_cohort.json").read_text(encoding="utf-8"))
@@ -232,7 +232,10 @@ def test_a_window_that_starts_after_the_index_date(truth_engine):
 def test_exclude_with_min_occurrences_is_evaluated_per_index_row(truth_engine):
     # as separate index events, P19's 2019 row has two lisinopril records in 0..1000 days, the 2021 row has one
     repeat_use = rule("Repeat use", "exclude", "drug", [1308216], 0, 1000, min_occurrences=2)
-    plan = build_plan(definition(rules=[repeat_use], index={"first_occurrence_only": False}))
+    # parse_definition caps this shape (#37); the engine itself must still evaluate it per index row, so skip the gate
+    raw = {"name": "t", "index_event": {"domain": "drug", "concept_ids": [1308216], "first_occurrence_only": False},
+           "rules": [repeat_use]}
+    plan = build_plan(CohortDefinition.model_validate(raw))
     with truth_engine.connect() as conn:
         rows_19 = [(r[0], r[1]) for r in conn.execute(plan.rows("rule_1")).fetchall() if r[0] == 19]
     assert rows_19 == [(19, dt.date(2021, 3, 1))]
