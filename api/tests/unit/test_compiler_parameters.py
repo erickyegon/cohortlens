@@ -61,16 +61,16 @@ def test_user_text_never_reaches_the_sql():
 
 def test_only_cdm_tables_are_read():
     sql, _ = compiled(build_plan(definition()), "demographics")
-    qualified = set(re.findall(r"cdm\.(\w+)", sql))
+    qualified = set(re.findall(r"\bcdm\.(\w+)", sql))
     assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor"}, qualified
     # every dotted name is either in schema cdm or one of our own CTEs: nothing from another schema
-    prefixes = set(re.findall(r"([a-z_]+)\.[a-z_]+", sql))
+    prefixes = set(re.findall(r"\b([a-z_]+)\.[a-z_]+", sql))
     assert prefixes <= {"cdm", "index_events", "demographics"}, prefixes
 
 
 def test_steps_are_ordered_and_labelled():
     plan = build_plan(definition())
-    assert [s.key for s in plan.steps] == ["index", "demographics"]
+    assert [s.key for s in plan.steps] == ["index", "demographics", "observation"]
     assert all(s.label for s in plan.steps)
 
 
@@ -86,3 +86,77 @@ def test_compiler_source_has_no_escape_hatches_for_raw_sql():
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.JoinedStr)], "f-strings are not allowed in the compiler"
     assert not [n for n in ast.walk(tree) if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod)
                 and isinstance(n.left, ast.Constant) and isinstance(n.left.value, str)], "no %-formatting"
+
+
+# ---- observation window and rules (issue #7) ------------------------------------------------------------------
+
+def rules_definition():
+    return parse_definition({
+        "name": HOSTILE_NAME,
+        "index_event": {"domain": "drug", "concept_ids": [1308216]},
+        "observation": {"prior_days": 365, "post_days": 30},
+        "rules": [
+            {"label": "'; DROP TABLE cdm.person; -- label", "type": "exclude", "domain": "drug",
+             "concept_ids": [21601784], "window": {"start_days": -365, "end_days": -1}},
+            {"label": "Twice", "type": "include", "domain": "condition", "concept_ids": [320128],
+             "include_descendants": False, "window": {"start_days": -36500, "end_days": 0}, "min_occurrences": 2},
+        ],
+    })
+
+
+def test_steps_include_observation_and_one_keyed_step_per_rule_in_order():
+    plan = build_plan(rules_definition())
+    assert [s.key for s in plan.steps] == ["index", "demographics", "observation", "rule_1", "rule_2"]
+    assert plan.step("rule_1").label.startswith("'; DROP TABLE")  # the label is display text only
+    assert plan.step("rule_2").label == "Twice"
+    assert plan.step("observation").label
+
+
+@pytest.mark.parametrize("key", ["observation", "rule_1", "rule_2"])
+def test_observation_and_rule_values_are_bound_parameters(key):
+    sql, params = compiled(build_plan(rules_definition()), key)
+    stripped = re.sub(r"\bcdm\.\w+", "", sql)
+    for literal in ("21601784", "320128", "1308216", "365", "36500"):
+        assert literal not in stripped, literal
+    values = repr(list(params.values()))
+    assert "365" in values and "30" in values
+
+
+def test_rule_labels_and_names_never_reach_the_sql_or_its_parameters():
+    plan = build_plan(rules_definition())
+    for step in plan.steps:
+        sql, params = compiled(plan, step.key)
+        assert "DROP TABLE" not in sql and "DROP TABLE" not in repr(params)
+
+
+def test_all_tables_read_by_rule_steps_are_cdm_tables():
+    sql, _ = compiled(build_plan(rules_definition()), "rule_2")
+    qualified = set(re.findall(r"\bcdm\.(\w+)", sql))
+    assert qualified <= {"person", "drug_exposure", "condition_occurrence", "concept_ancestor", "observation_period"}
+    assert {"observation_period", "condition_occurrence"} <= qualified
+    prefixes = set(re.findall(r"\b([a-z_]+)\.[a-z_]+", sql))
+    assert prefixes <= {"cdm", "index_events", "demographics", "observation", "rule_1", "rule_2"}, prefixes
+
+
+def test_every_table_in_every_step_is_a_schema_qualified_cdm_table():
+    """Walks the SQLAlchemy objects (not the SQL text), so an unqualified table cannot hide from a regex."""
+    from sqlalchemy import Table
+    from sqlalchemy.sql import visitors
+
+    plan = build_plan(rules_definition())
+    seen = {}
+    for step in plan.steps:
+        tables = {e for e in visitors.iterate(plan.rows(step.key)) if isinstance(e, Table)}
+        assert tables, step.key
+        assert all(t.schema == "cdm" for t in tables), (step.key, [(t.schema, t.name) for t in tables])
+        seen[step.key] = {t.name for t in tables}
+    assert seen["observation"] >= {"observation_period", "person", "drug_exposure"}
+    assert seen["rule_2"] >= {"condition_occurrence", "observation_period"}
+
+
+def test_ten_rules_get_ten_positional_keys():
+    rules = [{"label": f"r{i}", "type": "exclude", "domain": "drug", "concept_ids": [1],
+              "window": {"start_days": -1, "end_days": -1}} for i in range(10)]
+    plan = build_plan(parse_definition({"name": "x", "index_event": {"domain": "drug", "concept_ids": [1]},
+                                        "rules": rules}))
+    assert [s.key for s in plan.steps][3:] == [f"rule_{i}" for i in range(1, 11)]
