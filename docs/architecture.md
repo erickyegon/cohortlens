@@ -54,6 +54,16 @@ Verified by `scripts/smoke_compose.sh`: reader can read `cdm`, cannot read `app`
 6. `cohort.suppress`: counts 1–10 become `"<11"`
 7. App connection inserts `cohort_run`; the response carries `X-Trace-Id`
 
+## Concept search
+
+`GET /api/concepts?q=` (served as `/concepts`; nginx strips `/api`) feeds the typeahead. It reads the vocabulary through the **reader** connection only (a test runs it with no app database configured).
+
+- **Results**: up to `limit` (default 20, 1 to 50) of `{concept_id, name, domain}` with `domain` spelled `condition` or `drug`, the spelling the cohort definition uses. Only condition and drug concepts are searchable (a definition cannot use any other domain), only valid ones, and only standard (`S`) or classification (`C`) concepts, because definitions use classes such as ATC groups as ancestors. `domain=condition|drug` narrows the search.
+- **Matching**: case-insensitive substring of the concept name; ordered prefix matches first, then word starts, then the rest, shorter names first within a rank.
+- **Short queries**: after trimming, fewer than 2 characters returns `[]` and runs no query. No match is also `200` and `[]`, never an error. More than 100 characters, control characters (including NUL), an unknown `domain` or a bad `limit` are `422` with a field-level error (`q`, `domain`, `limit`) in the standard error body.
+- **Safety**: every value is a bound parameter and `%`, `_` and `\` in the query are matched literally.
+- **Speed**: about 30 ms per search on the 26k-concept seed once the connection is open; the first request after start-up took about 350 ms in one measurement because it opens the connection. The 500 ms budget is enforced by a seed test (`make verify-seed`) on the best of three requests.
+
 ## Data
 
 - `cdm`: nine OMOP tables (person, observation_period, visit_occurrence, condition_occurrence, drug_exposure, measurement, death, concept, concept_ancestor). Source and decision: `docs/adr/001-omop-subset-over-custom-schema.md`. Schema DDL: `data/etl/cdm_ddl.sql` (added in the truth-fixture PR, #28).

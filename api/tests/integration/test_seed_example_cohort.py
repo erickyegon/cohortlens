@@ -77,3 +77,29 @@ def test_a_broad_all_events_cohort_within_the_cap_finishes_inside_the_statement_
         persons = connection.execute(select(func.count(func.distinct(last.c.person_id)))).scalar()
     engine.dispose()
     assert persons == 5568
+
+
+def test_concept_search_answers_hypertens_inside_the_typeahead_budget_on_the_seed(monkeypatch):
+    """#13: searching "hypertens" on the seeded vocabulary (26k concepts) returns matches within 500 ms."""
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from app.db import session
+    from app.main import app
+
+    monkeypatch.setenv("DATABASE_URL_READER", DSN)
+    session.reader_engine.cache_clear()
+    with TestClient(app) as client:
+        timings = []
+        for _ in range(3):  # the first call opens the connection
+            started = time.perf_counter()
+            response = client.get("/concepts", params={"q": "hypertens"})
+            timings.append(time.perf_counter() - started)
+    session.reader_engine().dispose()
+    session.reader_engine.cache_clear()
+    results = response.json()
+    assert response.status_code == 200 and results
+    assert all("hypertens" in concept["name"].lower() for concept in results)
+    assert any(concept["concept_id"] == 320128 for concept in results)  # Essential hypertension
+    assert min(timings) < 0.5, timings

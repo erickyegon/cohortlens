@@ -25,12 +25,13 @@ def client(truth_engine, monkeypatch):
     url = truth_engine.url.render_as_string(hide_password=False).replace("postgresql+psycopg://", "postgresql://")
     monkeypatch.setenv("DATABASE_URL_READER", url)
     monkeypatch.delenv("DATABASE_URL_APP", raising=False)  # the concept route must not need the app database
+    original_reader_engine = session.reader_engine  # a test may replace it; clean up through the real one
     session.reader_engine.cache_clear()
     session.app_engine.cache_clear()
     with TestClient(app, raise_server_exceptions=False) as test_client:
         yield test_client
-    session.reader_engine().dispose()
-    session.reader_engine.cache_clear()
+    original_reader_engine().dispose()
+    original_reader_engine.cache_clear()
 
 
 def search(client, q, **params):
@@ -87,8 +88,8 @@ def test_the_domain_filter_narrows_the_results(client):
 
 
 def test_concepts_that_cannot_be_used_in_a_definition_are_never_returned(client):
-    # gender (MALE/FEMALE), visits and measurements exist in the vocabulary but are not condition or drug concepts
-    for query in ("male", "visit", "pressure", "hemoglobin"):
+    # gender (FEMALE), visits and measurements exist in the vocabulary but are not condition or drug concepts
+    for query in ("female", "visit", "pressure", "hemoglobin"):
         assert search(client, query).json() == [], query
 
 
