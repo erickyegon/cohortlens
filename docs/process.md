@@ -16,6 +16,10 @@ How one story moves from issue to production, who does what, and where the evide
 - Every commit carries an `Agent-Role:` trailer and a `Refs #N` / `Closes #N` line.
 - **Merge with a merge commit, never squash or rebase-merge.** Squashing collapses a PR into one commit and drops the per-commit `Agent-Role:` trailers from `main`; they are part of the evidence trail.
 - The human is the only one who merges and approves production deploys (AGENTS.md rule 5).
+- **At most one level of stacking.** A PR may be stacked on one unmerged PR, never on a stack. Prefer a base of `main` whenever the PR does not need the other PR's code.
+- **Base check before every handoff.** Before handing the human any PR to merge, run `gh pr view <n> --json baseRefName` and confirm the base is `main`; if it is not (for example because the PR it was stacked on has merged), retarget it with `gh pr edit <n> --base main` and confirm CI is still green. Reason: PRs #40, #41 and #42 were once merged into their stacked base branches instead of `main`, so only #39 reached `main` and the work had to be recovered through a separate merge PR (#44). A stacked PR is merged only after its base is on `main`, base first, then retarget, then merge.
+- **Pushing.** Push with `gh` as the credential helper (`git -c credential.helper= -c "credential.helper=!gh auth git-credential" push ...`); the default Windows credential manager can hang waiting for a prompt nobody sees.
+- The Project board lists every issue and every PR, with the Status field set (`In review` while open, `Done` once merged).
 
 ## Why reviews are posted as comments
 
