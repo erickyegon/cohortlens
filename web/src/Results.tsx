@@ -32,31 +32,39 @@ function RunProblem({ run }: { run: Run }) {
   );
 }
 
-/** One bar per step, scaled to the first step. A suppressed step ("<11") gets a small bar and no numeric value. */
+const SUPPRESSED_MAX = 10; // "<11" means at most 10 patients
+
+/**
+ * One bar per step, scaled to the first step. A step with a real number is a `meter`. A suppressed step ("<11") is an
+ * image with a text label (a meter needs a number) drawn as a dashed outline that is at most 10 patients wide: it never
+ * looks bigger than a real step of 11, and it carries no number. With no scale (the first step is suppressed) it is a
+ * fixed small outline, so no scale is implied.
+ */
 export function Waterfall({ steps }: { steps: StepCount[] }) {
   const first = steps[0]?.persons;
   const scale = typeof first === "number" && first > 0 ? first : null;
   const widthOf = (persons: Count): string => {
-    if (persons === "<11") return "3%"; // visible, but it carries no number
+    if (persons === "<11") return scale === null ? "3%" : `${Math.min(100, (SUPPRESSED_MAX / scale) * 100)}%`;
     if (scale === null) return persons === 0 ? "0%" : "100%";
     return `${Math.min(100, (persons / scale) * 100)}%`;
   };
+  const track = { background: "#e6e6e6", height: "1rem" } as const;
   return (
     <ol aria-label="Attrition waterfall" style={{ listStyle: "none", padding: 0 }}>
       {steps.map((step) => (
         <li key={step.key} style={{ display: "grid", gridTemplateColumns: "16rem 1fr 6rem", gap: "0.5rem", alignItems: "center" }}>
           <span>{step.label}</span>
-          <div
-            role="meter"
-            aria-label={step.label}
-            aria-valuemin={0}
-            {...(typeof step.persons === "number"
-              ? { "aria-valuenow": step.persons, "aria-valuemax": scale ?? step.persons }
-              : { "aria-valuetext": step.persons })}
-            style={{ background: "#e6e6e6", height: "1rem" }}
-          >
-            <div style={{ width: widthOf(step.persons), height: "100%", background: "#3b6ea5" }} />
-          </div>
+          {typeof step.persons === "number" ? (
+            <div role="meter" aria-label={step.label} aria-valuemin={0} aria-valuenow={step.persons}
+              aria-valuemax={scale ?? step.persons} style={track}>
+              <div style={{ width: widthOf(step.persons), height: "100%", background: "#3b6ea5" }} />
+            </div>
+          ) : (
+            <div role="img" aria-label={`${step.label}: ${step.persons}`} style={track}>
+              <div data-suppressed="true"
+                style={{ width: widthOf(step.persons), minWidth: "4px", height: "100%", border: "1px dashed #3b6ea5", boxSizing: "border-box" }} />
+            </div>
+          )}
           <span style={{ textAlign: "right" }}>{formatCount(step.persons)}</span>
         </li>
       ))}
@@ -107,7 +115,7 @@ export function Results({ cohortId, onBack }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [baseline, setBaseline] = useState<{ runId: string; baseline: Baseline } | null>(null);
   const [problem, setProblem] = useState<string | null>(null); // why loading failed
-  const [runProblem, setRunProblem] = useState<{ message: string; reference: string | null } | null>(null);
+  const [runProblem, setRunProblem] = useState<{ message: string; reference: string | null; runId: string | null } | null>(null);
   const [running, setRunning] = useState(false);
 
   /** Reload the history; `keep` (the run just made) stays in the list even if the server has not returned it yet. */
@@ -142,10 +150,13 @@ export function Results({ cohortId, onBack }: Props) {
       setRuns((previous) => newestFirst([record, ...(previous ?? []).filter((r) => r.id !== fresh.id)]));
       await refreshRuns(record).catch(() => undefined);
     } catch (error) {
+      // the API records a failed or timed-out run and names it in the error body
+      const recordedId = error instanceof ApiError && typeof error.body.run_id === "string" ? error.body.run_id : null;
+      if (recordedId) setSelectedId(recordedId);
       if (error instanceof ApiError && error.status === 504) {
-        setRunProblem({ message: error.message, reference: error.traceId });
+        setRunProblem({ message: error.message, reference: error.traceId, runId: recordedId });
       } else {
-        setRunProblem({ message: failureText(error), reference: null });
+        setRunProblem({ message: failureText(error), reference: null, runId: recordedId });
       }
       await refreshRuns().catch(() => undefined); // a failed or timed-out run is recorded: show it in the history
     } finally {
@@ -175,7 +186,8 @@ export function Results({ cohortId, onBack }: Props) {
       )}
 
       {shown === null && <p>This cohort has not been run yet.</p>}
-      {shown !== null && shown.status !== "success" && <RunProblem run={shown} />}
+      {/* the message about the run just attempted is already shown above; do not say it twice */}
+      {shown !== null && shown.status !== "success" && runProblem?.runId !== shown.id && <RunProblem run={shown} />}
       {shown !== null && shown.status === "success" && shown.step_counts && (
         <>
           <p>
