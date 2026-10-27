@@ -107,6 +107,8 @@ def test_concept_search_answers_hypertens_inside_the_typeahead_budget_on_the_see
 
 def test_a_full_run_of_the_reference_cohort_on_the_seed_is_inside_the_latency_budget(monkeypatch):
     """#12 criterion 1: counts for every step, suppression and the baseline within 3 s on the demo dataset (NFR-1).
+    This times `execute_run` (the database work) on the best of three runs; the endpoint adds only the definition
+    load and the run insert on the small app tables.
     The step counts are the documented engine-order counts (920, 552, 552, 551, 489, 481)."""
     import json
     import time

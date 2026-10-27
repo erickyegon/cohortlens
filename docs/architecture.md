@@ -86,10 +86,13 @@ Failures are recorded too, and every answer carries the `X-Trace-Id` that is als
 |---|---|---|
 | Statement timeout (10 s) | `504`, `"This cohort took longer than 10 seconds to count and was cancelled. Try a narrower index event, a shorter date range or fewer criteria, then run it again."`, plus `run_id` and `status` | `timeout` |
 | CDM database unreachable | `503` "The database is unavailable" (or "took too long to respond" for a lock timeout), plus `run_id` and `status` | `failed` |
-| Any other failure | `500` "Something went wrong running this cohort." plus the trace reference, `run_id` and `status`; the log line has the exception class and trace id only | `failed` |
+| Any other failure (including a database error that is not a connection problem) | `500` "Something went wrong running this cohort." plus the trace reference, `run_id` and `status`; the log line has the exception class and trace id only | `failed` |
 | App database down | `503`; the run cannot be stored | nothing |
+| The failure itself cannot be stored (a double fault), or the cohort was deleted during the run | `500` with the trace reference and a log line, but no `run_id` | nothing |
 
 A timed-out run is a failed run for alerting purposes (`docs/observability.md`).
+
+**The 10 s limit applies to each database statement, not to the whole run.** A run issues three statements (the step counts, the age/sex grid and the comorbidities), each cancelled after 10 s, so the worst case before a `504` is about 30 s, and a run can succeed even if the three together take longer than 10 s; the timeout message describes the statement that was cancelled. The demo dataset runs in well under a second, so this is a documented limitation, not a measured problem; a total run budget (the remaining time for each later statement) is a possible follow-up.
 
 ## Concept search
 

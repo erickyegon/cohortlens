@@ -36,13 +36,16 @@ def error_response(
     return JSONResponse(body, status_code=status)
 
 
-def database_error_response(request: Request, exc: Exception, extra: dict | None = None):
+def database_error_response(
+    request: Request, exc: Exception, extra: dict | None = None, fallback_message: str = "Internal Server Error",
+):
     """Map a database exception to a response and log it. Only connection-level failures are "unavailable"; a
-    statement timeout says it took too long; anything else (a bad statement, a missing table) is a plain 500."""
+    statement timeout says it took too long; anything else (a bad statement, a missing table) is a 500 with
+    `fallback_message`."""
     log_failure(request, exc)
     sqlstate = getattr(getattr(exc, "orig", None), "sqlstate", None)
     if sqlstate in TOO_SLOW_STATES:
         return error_response(request, 503, "The database took too long to respond. Please try again.", extra=extra)
     if sqlstate is None or sqlstate.startswith("08") or sqlstate in UNAVAILABLE_STATES:
         return error_response(request, 503, "The database is unavailable. Please try again.", extra=extra)
-    return error_response(request, 500, "Internal Server Error", extra=extra)
+    return error_response(request, 500, fallback_message, extra=extra)

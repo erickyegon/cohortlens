@@ -142,7 +142,8 @@ async def run_cohort(cohort_id: str, request: Request):
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and answered with the trace reference
         recorded = await run_in_threadpool(_record, parsed, "failed", trace_id, _elapsed_ms(started), None)
         if isinstance(exc, (DBAPIError, PoolTimeout)):  # connection-level: 503; anything else a plain 500
-            return database_error_response(request, exc, extra=_run_ref(recorded))
+            return database_error_response(request, exc, extra=_run_ref(recorded),
+                                           fallback_message="Something went wrong running this cohort.")
         log_failure(request, exc)
         return error_response(request, 500, "Something went wrong running this cohort.", extra=_run_ref(recorded))
 
