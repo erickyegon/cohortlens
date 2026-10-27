@@ -16,7 +16,15 @@ import pathlib
 
 from sqlalchemy import text
 
-from app.cohort_engine.baseline import AGE_BANDS, SEXES, Baseline, PublicBaseline, run_baseline, suppress_baseline
+from app.cohort_engine.baseline import (
+    AGE_BANDS,
+    COMORBIDITY_NOTE,
+    SEXES,
+    Baseline,
+    PublicBaseline,
+    run_baseline,
+    suppress_baseline,
+)
 from app.cohort_engine.compiler import build_plan
 from app.cohort_engine.models import parse_definition
 
@@ -132,14 +140,59 @@ def test_small_cells_are_masked_and_cells_of_eleven_or_more_stay_exact(truth_eng
     assert public[("80+", "M")] == 0  # an empty cell stays 0
 
 
-def test_every_cell_of_the_reference_baseline_is_masked_or_zero(truth_engine):
+def test_every_age_sex_cell_of_the_reference_baseline_is_masked_or_zero(truth_engine):
     public = suppress_baseline(baseline_of(truth_engine, REFERENCE))
     assert {c.persons for c in public.age_sex} == {0, "<11"}
-    assert {c.persons for c in public.comorbidities} == {"<11"}
+
+
+# ---- comorbidities with fewer than 11 patients are left out entirely, with a note ----------------------------------
+# Index-only cohort (21 members), conditions on or before the index date, derived by hand from the fixture generator:
+# essential hypertension 320128 for P1 P3 P5 P6 P7 P8 P9 P10 P13 P14 P15 P16 P17 P18 P20 P21 P23 = 17; heart failure
+# 316139 for P14 and P21 = 2 (P15's is after the index); malignant hypertension 317898 for P2 = 1; chronic heart
+# failure 4229440 for P16 = 1. P11 has none, P12 and P19 are diagnosed after their index.
+
+def test_exact_comorbidities_of_the_index_only_cohort_are_the_hand_derived_ones(truth_engine):
+    got = [(c.concept_id, c.persons) for c in baseline_of(truth_engine, index_only()).comorbidities]
+    assert got == [(320128, 17), (316139, 2), (317898, 1), (4229440, 1)]
+
+
+def test_only_conditions_with_at_least_eleven_patients_are_shown_with_their_exact_count(truth_engine):
+    public = suppress_baseline(baseline_of(truth_engine, index_only()))
+    assert [(c.concept_id, c.name, c.persons) for c in public.comorbidities] == [
+        (320128, "Essential hypertension", 17)]
+
+
+def test_a_cohort_whose_conditions_are_all_rare_shows_none_of_them(truth_engine):
+    public = suppress_baseline(baseline_of(truth_engine, REFERENCE))  # 9, 1 and 1 patients
+    assert public.comorbidities == ()
+
+
+def test_the_note_is_returned_for_cohorts_whether_or_not_conditions_were_left_out(truth_engine):
+    assert COMORBIDITY_NOTE == "Conditions with fewer than 11 patients are not shown."
+    assert suppress_baseline(baseline_of(truth_engine, REFERENCE)).comorbidity_note == COMORBIDITY_NOTE
+    assert suppress_baseline(baseline_of(truth_engine, index_only())).comorbidity_note == COMORBIDITY_NOTE
+
+
+def test_eleven_patients_are_shown_and_ten_are_not(truth_engine):
+    def two_new_conditions(conn):  # 900001 for 11 members, 900002 for 10 of those, all before the index date
+        members = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12]
+        for n, concept_id in enumerate((900001, 900002)):
+            conn.execute(text("insert into cdm.concept values (:c, :n, 'Condition', 'SNOMED', 'Clinical Finding',"
+                              " 'S', :n, NULL)"), {"c": concept_id, "n": f"Extra condition {concept_id}"})
+            for i, person in enumerate(members if n == 0 else members[:10]):
+                conn.execute(text("insert into cdm.condition_occurrence (condition_occurrence_id, person_id,"
+                                  " condition_concept_id, condition_start_date, condition_type_concept_id)"
+                                  " values (:i, :p, :c, '2019-01-01', 32020)"),
+                             {"i": 8000 + n * 100 + i, "p": person, "c": concept_id})
+    exact = baseline_of(truth_engine, index_only(), after=two_new_conditions)
+    counts = {c.concept_id: c.persons for c in exact.comorbidities}
+    assert counts[900001] == 11 and counts[900002] == 10
+    shown = {c.concept_id: c.persons for c in suppress_baseline(exact).comorbidities}
+    assert shown == {320128: 17, 900001: 11}
 
 
 # ---- aggregates only -------------------------------------------------------------------------------------------------
 
 def test_the_baseline_types_hold_no_person_level_field():
     assert [f.name for f in dataclasses.fields(Baseline)] == ["age_sex", "comorbidities"]
-    assert [f.name for f in dataclasses.fields(PublicBaseline)] == ["age_sex", "comorbidities"]
+    assert [f.name for f in dataclasses.fields(PublicBaseline)] == ["age_sex", "comorbidities", "comorbidity_note"]
