@@ -127,7 +127,11 @@ def rule_step(previous: CTE, rule: Rule, name: str) -> CTE:
     if rule.min_occurrences == 1:
         matches: ColumnElement = exists().where(in_window)
     else:
-        matches = select(func.count()).select_from(table).where(in_window).scalar_subquery() >= rule.min_occurrences
+        # Count at most `min_occurrences` matching records: once k are found the answer is known, so the probe
+        # stops there instead of scanning all of a heavy user's records. Same result, a much cheaper plan (#37).
+        # `correlate` keeps the inner select tied to the previous step's row (otherwise it would count globally).
+        first_k = select(table.c.person_id).where(in_window).correlate(previous).limit(rule.min_occurrences)
+        matches = select(func.count()).select_from(first_k.subquery()).scalar_subquery() >= rule.min_occurrences
     kept = select(previous.c.person_id, previous.c.index_date).where(matches if rule.type == "include" else ~matches)
     return kept.cte(name)
 
