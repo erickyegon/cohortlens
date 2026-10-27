@@ -167,7 +167,7 @@ def test_a_cohort_whose_conditions_are_all_rare_shows_none_of_them(truth_engine)
     assert public.comorbidities == ()
 
 
-def test_the_note_is_always_returned_even_when_nothing_was_left_out(truth_engine):
+def test_the_note_is_returned_for_cohorts_whether_or_not_conditions_were_left_out(truth_engine):
     assert COMORBIDITY_NOTE == "Conditions with fewer than 11 patients are not shown."
     assert suppress_baseline(baseline_of(truth_engine, REFERENCE)).comorbidity_note == COMORBIDITY_NOTE
     assert suppress_baseline(baseline_of(truth_engine, index_only())).comorbidity_note == COMORBIDITY_NOTE
