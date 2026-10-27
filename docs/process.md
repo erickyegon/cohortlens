@@ -64,5 +64,6 @@ Two pull requests ran the full loop. Both went through two Reviewer rounds befor
 - **Still to come:** the dev deploy and the prod approval step. They arrive with the delivery epic (E4); CI (#16) is the next piece and will make the checks below required on `main`.
 
 ## Human decisions recorded along the way
+- Merge exception: PRs #35 and #36 were merged by the agent (2026-10-27) at the product owner's explicit instruction; the rule that only the human merges (AGENTS.md rule 5) is otherwise unchanged. From #8 onward the human merges unless the product owner says otherwise in that turn.
 - Dataset: Synthea generation instead of the Eunomia/SynPUF candidates, and the reference cohort definition (hypertension any time before index, age ≥ 50): [ADR-001](adr/001-omop-subset-over-custom-schema.md).
 - GitGuardian: the two flagged values are local-only placeholder passwords already in the PR history; the two flagged values were marked as false positives in the GitGuardian dashboard by the account owner. Real database credentials live in Google Secret Manager (see [deployment.md](deployment.md)) and the placeholder values must never be used in any real environment.
