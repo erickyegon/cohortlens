@@ -9,10 +9,11 @@ interface Props {
   selected: ConceptRef[];
   onChange: (next: ConceptRef[]) => void;
   error?: string;
+  errorId?: string; // the id of the error message, so the search box can point at it
 }
 
 /** Concept typeahead (GET /api/concepts): type at least two characters, pick results, remove chips. */
-export function ConceptPicker({ label, domain, selected, onChange, error }: Props) {
+export function ConceptPicker({ label, domain, selected, onChange, error, errorId }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Concept[]>([]);
   const [failed, setFailed] = useState(false);
@@ -58,7 +59,11 @@ export function ConceptPicker({ label, domain, selected, onChange, error }: Prop
           value={query}
           placeholder="Type at least 2 letters to search"
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault(); // Enter must not submit the whole cohort form
+          }}
           aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
         />
       </label>
       {failed && <p role="status">Concept search is unavailable right now.</p>}
@@ -93,7 +98,7 @@ export function ConceptPicker({ label, domain, selected, onChange, error }: Prop
           })}
         </ul>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && <p id={errorId} role="alert">{error}</p>}
     </div>
   );
 }

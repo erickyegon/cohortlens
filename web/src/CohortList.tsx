@@ -17,8 +17,9 @@ export function formatCount(count: Count): string {
   return typeof count === "number" ? count.toLocaleString("en-US") : count;
 }
 
-function lastRunText(run: LastRun | null): string {
-  if (run === null) return "Not run yet";
+// `== null` on purpose: an API that does not send last_run yet (before PR #49) reads as "not run", not as a crash
+function lastRunText(run: LastRun | null | undefined): string {
+  if (run == null) return "Not run yet";
   if (run.status === "success") return `${run.final_count === null ? "-" : formatCount(run.final_count)} patients`;
   return run.status === "timeout" ? "Timed out" : "Failed";
 }

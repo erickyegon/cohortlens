@@ -339,9 +339,12 @@ describe("Errors are tied to their fields", () => {
     render(<Builder cohortId={null} onBack={() => {}} />);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Add rule" }));
-    await user.type(screen.getByLabelText("Rule 1 window start (days from the index date)"), "5");
-    await user.type(screen.getByLabelText("Rule 1 window end (days from the index date)"), "2");
+    const start = screen.getByLabelText("Rule 1 window start (days from the index date)");
     const end = screen.getByLabelText("Rule 1 window end (days from the index date)");
+    await user.clear(start);
+    await user.type(start, "5");
+    await user.clear(end);
+    await user.type(end, "2");
     expect(end).toBeInvalid();
     expect(end).toHaveAccessibleDescription("The window must not end before it starts");
     await user.click(screen.getByRole("button", { name: "Save cohort" }));

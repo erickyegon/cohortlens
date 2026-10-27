@@ -13,8 +13,11 @@ interface Props {
   onSaved?: (id: string) => void;
 }
 
-function Message({ text }: { text?: string }) {
-  return text ? <span role="alert" className="error">{text}</span> : null;
+/** The id an error message gets, so its input can point at it with aria-describedby. */
+const errorId = (path: string) => `error-${path.replace(/[^a-zA-Z0-9]+/g, "-")}`;
+
+function Message({ path, text }: { path: string; text?: string }) {
+  return text ? <span id={errorId(path)} role="alert" className="error">{text}</span> : null;
 }
 
 export function Builder({ cohortId, onBack, onSaved }: Props) {
@@ -52,6 +55,10 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
   const clientErrors = validate(form);
   const errorFor = (path: string): string | undefined =>
     serverErrors[path] ?? (submitted || touched.has(path) ? clientErrors[path] : undefined);
+  /** Attributes that tie an input to its error message (read by screen readers, and by the tests). */
+  const a11y = (path: string) =>
+    errorFor(path) ? { "aria-invalid": true as const, "aria-describedby": errorId(path) } : {};
+  const message = (path: string) => <Message path={path} text={errorFor(path)} />;
 
   const change = (patch: Partial<FormState>, ...paths: string[]) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -98,9 +105,9 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
 
       <label>
         Name
-        <input value={form.name} onChange={(e) => change({ name: e.target.value }, "name")} />
+        <input value={form.name} onChange={(e) => change({ name: e.target.value }, "name")} {...a11y("name")} />
       </label>
-      <Message text={errorFor("name")} />
+      {message("name")}
 
       <fieldset>
         <legend>Index event</legend>
@@ -120,6 +127,7 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
           selected={form.concepts}
           onChange={(concepts) => change({ concepts }, "index_event.concept_ids")}
           error={errorFor("index_event.concept_ids")}
+          errorId={errorId("index_event.concept_ids")}
         />
         <label>
           <input type="checkbox" checked={form.include_descendants}
@@ -133,71 +141,75 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
         </label>
         <label>
           Index date from
-          <input type="date" value={form.date_start}
+          <input type="date" value={form.date_start} {...a11y("index_event.date_range.end")}
             onChange={(e) => change({ date_start: e.target.value }, "index_event.date_range.end")} />
         </label>
         <label>
           Index date to
-          <input type="date" value={form.date_end}
+          <input type="date" value={form.date_end} {...a11y("index_event.date_range.end")}
             onChange={(e) => change({ date_end: e.target.value }, "index_event.date_range.end")} />
         </label>
-        <Message text={errorFor("index_event.date_range.end") ?? errorFor("index_event.date_range.start")} />
+        {message("index_event.date_range.end")}
       </fieldset>
 
       <fieldset>
         <legend>Demographics</legend>
         <label>
           Minimum age
-          <input value={form.age_min} inputMode="numeric"
+          <input value={form.age_min} inputMode="numeric" {...a11y("demographics.age_min")}
             onChange={(e) => change({ age_min: e.target.value }, "demographics.age_min", "demographics.age_max")} />
         </label>
-        <Message text={errorFor("demographics.age_min")} />
+        {message("demographics.age_min")}
         <label>
           Maximum age
-          <input value={form.age_max} inputMode="numeric"
+          <input value={form.age_max} inputMode="numeric" {...a11y("demographics.age_max")}
             onChange={(e) => change({ age_max: e.target.value }, "demographics.age_min", "demographics.age_max")} />
         </label>
-        <Message text={errorFor("demographics.age_max")} />
+        {message("demographics.age_max")}
         <label>
-          <input type="checkbox" checked={form.sexF} onChange={(e) => change({ sexF: e.target.checked }, "demographics.sex")} />
+          <input type="checkbox" checked={form.sexF} {...a11y("demographics.sex")}
+            onChange={(e) => change({ sexF: e.target.checked }, "demographics.sex")} />
           Female
         </label>
         <label>
-          <input type="checkbox" checked={form.sexM} onChange={(e) => change({ sexM: e.target.checked }, "demographics.sex")} />
+          <input type="checkbox" checked={form.sexM} {...a11y("demographics.sex")}
+            onChange={(e) => change({ sexM: e.target.checked }, "demographics.sex")} />
           Male
         </label>
-        <Message text={errorFor("demographics.sex")} />
+        {message("demographics.sex")}
       </fieldset>
 
       <fieldset>
         <legend>Observation</legend>
         <label>
           Days of observation before the index date
-          <input value={form.prior_days} inputMode="numeric"
+          <input value={form.prior_days} inputMode="numeric" {...a11y("observation.prior_days")}
             onChange={(e) => change({ prior_days: e.target.value }, "observation.prior_days")} />
         </label>
-        <Message text={errorFor("observation.prior_days")} />
+        {message("observation.prior_days")}
         <label>
           Days of observation after the index date
-          <input value={form.post_days} inputMode="numeric"
+          <input value={form.post_days} inputMode="numeric" {...a11y("observation.post_days")}
             onChange={(e) => change({ post_days: e.target.value }, "observation.post_days")} />
         </label>
-        <Message text={errorFor("observation.post_days")} />
+        {message("observation.post_days")}
       </fieldset>
 
       <fieldset>
         <legend>Rules</legend>
-        <Message text={errorFor("rules")} />
+        {message("rules")}
         {form.rules.map((rule, i) => {
           const n = i + 1;
+          const at = (field: string) => `rules.${i}.${field}`;
           return (
             <fieldset key={rule.key}>
               <legend>{`Rule ${n}`}</legend>
               <label>
                 {`Rule ${n} label`}
-                <input value={rule.label} onChange={(e) => changeRule(i, { label: e.target.value }, "label")} />
+                <input value={rule.label} {...a11y(at("label"))}
+                  onChange={(e) => changeRule(i, { label: e.target.value }, "label")} />
               </label>
-              <Message text={errorFor(`rules.${i}.label`)} />
+              {message(at("label"))}
               <label>
                 {`Rule ${n} type`}
                 <select value={rule.type}
@@ -219,7 +231,8 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
                 domain={rule.domain}
                 selected={rule.concepts}
                 onChange={(concepts) => changeRule(i, { concepts }, "concept_ids")}
-                error={errorFor(`rules.${i}.concept_ids`)}
+                error={errorFor(at("concept_ids"))}
+                errorId={errorId(at("concept_ids"))}
               />
               <label>
                 <input type="checkbox" checked={rule.include_descendants}
@@ -228,22 +241,22 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
               </label>
               <label>
                 {`Rule ${n} window start (days from the index date)`}
-                <input value={rule.start_days} inputMode="numeric"
+                <input value={rule.start_days} inputMode="numeric" {...a11y(at("window.start_days"))}
                   onChange={(e) => changeRule(i, { start_days: e.target.value }, "window.start_days", "window.end_days")} />
               </label>
-              <Message text={errorFor(`rules.${i}.window.start_days`)} />
+              {message(at("window.start_days"))}
               <label>
                 {`Rule ${n} window end (days from the index date)`}
-                <input value={rule.end_days} inputMode="numeric"
+                <input value={rule.end_days} inputMode="numeric" {...a11y(at("window.end_days"))}
                   onChange={(e) => changeRule(i, { end_days: e.target.value }, "window.start_days", "window.end_days")} />
               </label>
-              <Message text={errorFor(`rules.${i}.window.end_days`)} />
+              {message(at("window.end_days"))}
               <label>
                 {`Rule ${n} minimum occurrences`}
-                <input value={rule.min_occurrences} inputMode="numeric"
+                <input value={rule.min_occurrences} inputMode="numeric" {...a11y(at("min_occurrences"))}
                   onChange={(e) => changeRule(i, { min_occurrences: e.target.value }, "min_occurrences")} />
               </label>
-              <Message text={errorFor(`rules.${i}.min_occurrences`)} />
+              {message(at("min_occurrences"))}
               <button type="button" aria-label={`Move rule ${n} up`} disabled={i === 0}
                 onClick={() => change({ rules: moveRule(form.rules, i, -1) }, "rules")}>↑</button>
               <button type="button" aria-label={`Move rule ${n} down`} disabled={i === form.rules.length - 1}
