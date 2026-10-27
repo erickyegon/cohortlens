@@ -1,7 +1,7 @@
 """Small-cell suppression (NFR-4, FR-10, FR-11): counts of 1 to 10 are never shown, they become "<11".
 
 Pure logic with no database access. The engine's `StepCount` carries exact numbers and stays internal; everything
-that leaves the API goes through `suppress_steps`, which returns `PublicStepCount` (key, label, count) and nothing
+that leaves the API goes through `suppress_steps`, which returns `PublicStepCount` (key, label, persons) and nothing
 else, so there is no person-level field to leak.
 """
 from __future__ import annotations

@@ -100,3 +100,10 @@ def test_the_module_is_pure_logic_with_no_database_or_sql_imports():
     imported = {n.module.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module}
     imported |= {a.name.split(".")[0] for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     assert not imported & {"sqlalchemy", "psycopg", "psycopg2", "fastapi"}
+
+
+def test_a_public_step_cannot_be_changed_after_it_is_built():
+    step = suppress_steps([StepCount("index", "First", 5)])[0]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        step.persons = 5
+
