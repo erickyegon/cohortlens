@@ -139,6 +139,7 @@ def test_when_the_cdm_database_is_unreachable_the_run_is_a_503_with_a_reference_
     assert "nothing" not in response.text and "127.0.0.1" not in response.text
     row = rows(api_env, "select * from app.cohort_run")[0]
     assert row["status"] == "failed" and row["trace_id"] == trace_id
+    assert response.json()["run_id"] == str(row["id"]) and response.json()["status"] == "failed"  # the UI can link it
 
 
 def test_when_the_app_database_is_down_the_run_is_a_503_with_a_reference_and_nothing_is_recorded(
@@ -153,6 +154,25 @@ def test_when_the_app_database_is_down_the_run_is_a_503_with_a_reference_and_not
     monkeypatch.setenv("DATABASE_URL_APP", api_env)
     session.app_engine.cache_clear()
     assert rows(api_env, "select count(*) as n from app.cohort_run")[0]["n"] == 0
+
+
+def test_a_real_sql_error_during_a_run_gets_the_friendly_message_and_is_recorded_as_failed(
+        client, api_env, monkeypatch, caplog):
+    import app.cohort_engine.attrition as attrition
+
+    cohort_id = save(client)
+    monkeypatch.setattr(attrition, "count_statement", lambda plan: select(func.count()).select_from(
+        __import__("sqlalchemy").table("no_such_table_secret", schema="cdm")))
+    with caplog.at_level(logging.ERROR):
+        response = run(client, cohort_id)
+    assert response.status_code == 500
+    body = response.json()
+    assert body["error"] == "Something went wrong running this cohort."
+    assert body["trace_id"] == response.headers["x-trace-id"] and body["status"] == "failed"
+    assert "no_such_table_secret" not in response.text and "no_such_table_secret" not in caplog.text
+    assert "ProgrammingError" in caplog.text and body["trace_id"] in caplog.text
+    row = rows(api_env, "select * from app.cohort_run")[0]
+    assert row["status"] == "failed" and body["run_id"] == str(row["id"])
 
 
 # ---- timeouts: a clear message, and the run is recorded as a timeout -----------------------------------------------
