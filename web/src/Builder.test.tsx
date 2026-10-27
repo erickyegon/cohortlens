@@ -368,4 +368,22 @@ describe("Errors are tied to their fields", () => {
     expect(screen.getByLabelText("Minimum age")).toBeInvalid();
     expect(screen.getByLabelText("Minimum age")).toHaveAccessibleDescription("Server: age out of range");
   });
+
+  it.each(["index_event.date_range.start", "index_event.date_range.end"])(
+    "shows a server error on %s at the date fields", async (field) => {
+      mockApi({
+        [`GET /cohorts/${ID}`]: REFERENCE_COHORT,
+        [`PUT /cohorts/${ID}`]: {
+          status: 422,
+          body: { error: "Invalid", trace_id: "t", errors: [{ field, message: "Server: date out of range" }] },
+        },
+      });
+      open();
+      await screen.findByDisplayValue(REFERENCE_COHORT.name);
+      await userEvent.setup().click(screen.getByRole("button", { name: "Save cohort" }));
+      expect(await screen.findByText("Server: date out of range")).toBeInTheDocument();
+      expect(screen.getByLabelText("Index date from")).toBeInvalid();
+      expect(screen.getByLabelText("Index date to")).toHaveAccessibleDescription("Server: date out of range");
+    },
+  );
 });
