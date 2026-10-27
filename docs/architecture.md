@@ -77,6 +77,16 @@ Rules that apply to every route:
 6. `cohort.suppress`: counts 1–10 become `"<11"`
 7. App connection inserts `cohort_run`; the response carries `X-Trace-Id`
 
+## Concept search
+
+`GET /api/concepts?q=` (served as `/concepts`; nginx strips `/api`) feeds the typeahead. It reads the vocabulary through the **reader** connection only (a test runs it with no app database configured).
+
+- **Results**: up to `limit` (default 20, 1 to 50) of `{concept_id, name, domain}` with `domain` spelled `condition` or `drug`, the spelling the cohort definition uses. Only condition and drug concepts are searchable (a definition cannot use any other domain), only valid ones, and only standard (`S`) or classification (`C`) concepts, because definitions use classes such as ATC groups as ancestors. `domain=condition|drug` narrows the search.
+- **Matching**: case-insensitive substring of the concept name; ordered prefix matches first, then word starts, then the rest, shorter names first within a rank, then by name, then by id. A "word start" is a match right after a space, so `(lisinopril)` or `a/lisinopril` rank as ordinary mid-word matches. Case folding uses Python's `lower()` on the query and PostgreSQL's `lower()` on the name, which disagree for a few non-ASCII letters (Turkish dotted capital I, final sigma); the demo vocabulary is all ASCII.
+- **Short queries**: after trimming, fewer than 2 characters returns `[]` and runs no query. No match is also `200` and `[]`, never an error. More than 100 characters, control characters (including NUL), an unknown `domain` or a bad `limit` are `422` with a field-level error (`q`, `domain`, `limit`) in the standard error body.
+- **Safety**: every value is a bound parameter and `%`, `_` and `\` in the query are matched literally.
+- **Speed**: 30 to 90 ms per search through the API on the 26k-concept seed once the connection is open (a sequential scan with a substring match; the worst case, a two-letter query at limit 50, is about 80 ms); the first request after start-up took about 350 ms in one measurement because it opens the connection. The 500 ms budget is enforced by a seed test (`make verify-seed`) on the best of three requests. A full OMOP vocabulary (millions of concepts) would need a trigram index (`pg_trgm`).
+
 ## Data
 
 - `cdm`: nine OMOP tables (person, observation_period, visit_occurrence, condition_occurrence, drug_exposure, measurement, death, concept, concept_ancestor). Source and decision: `docs/adr/001-omop-subset-over-custom-schema.md`. Schema DDL: `data/etl/cdm_ddl.sql` (added in the truth-fixture PR, #28).
