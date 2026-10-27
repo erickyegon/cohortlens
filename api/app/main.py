@@ -1,4 +1,4 @@
-"""CohortLens API: health endpoints, the X-Trace-Id header, cohort CRUD and concept search."""
+"""CohortLens API: health endpoints, the X-Trace-Id header, cohort CRUD, runs and concept search."""
 import os
 import secrets
 
@@ -13,12 +13,14 @@ from app.cohorts import router as cohorts_router
 from app.concepts import router as concepts_router
 from app.db.session import app_engine, reader_engine
 from app.errors import database_error_response, error_response, log_failure
+from app.runs import router as runs_router
 
 SERVICE_VERSION = os.environ.get("SERVICE_VERSION", "dev")
 
 app = FastAPI(title="CohortLens API", version=SERVICE_VERSION)
 app.include_router(cohorts_router)
 app.include_router(concepts_router)
+app.include_router(runs_router)
 
 
 @app.middleware("http")

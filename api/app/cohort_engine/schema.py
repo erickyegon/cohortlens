@@ -49,6 +49,9 @@ concept = Table(
     "concept", metadata,
     Column("concept_id", Integer, primary_key=True),
     Column("concept_name", String),
+    Column("domain_id", String),
+    Column("standard_concept", String),
+    Column("invalid_reason", String),
 )
 
 # domain -> (table, concept column, event date column)

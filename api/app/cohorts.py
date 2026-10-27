@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from app.cohort_engine.models import DefinitionError, parse_definition
 from app.db.session import app_engine
 from app.db.tables import cohort_definition as cohorts
+from app.db.tables import cohort_run as runs
 from app.errors import error_response
 
 router = APIRouter(prefix="/cohorts")
@@ -86,9 +87,20 @@ def _get(cohort_id: uuid.UUID):
 
 
 def _list():
+    """Cohort rows, most recently updated first, and the newest run of each cohort that has one."""
     statement = select(*cohorts.c).order_by(cohorts.c.updated_at.desc(), cohorts.c.created_at.desc(), cohorts.c.id)
+    newest = (select(runs.c.cohort_id, runs.c.status, runs.c.step_counts, runs.c.created_at)
+              .distinct(runs.c.cohort_id).order_by(runs.c.cohort_id, runs.c.created_at.desc(), runs.c.id.desc()))
     with app_engine().connect() as conn:
-        return conn.execute(statement).all()
+        return conn.execute(statement).all(), {row.cohort_id: row for row in conn.execute(newest)}
+
+
+def _last_run(row) -> dict | None:
+    """What the cohort list shows about the newest run: its status, the (suppressed) final count and when it ran."""
+    if row is None:
+        return None
+    final = row.step_counts[-1]["persons"] if row.status == "success" and row.step_counts else None
+    return {"status": row.status, "final_count": final, "created_at": _iso(row.created_at)}
 
 
 def _delete(cohort_id: uuid.UUID) -> bool:
@@ -109,7 +121,8 @@ async def create_cohort(request: Request, response: Response):
 
 @router.get("")
 async def list_cohorts():
-    return [_summary(row) for row in await run_in_threadpool(_list)]
+    rows, newest = await run_in_threadpool(_list)
+    return [{**_summary(row), "last_run": _last_run(newest.get(row.id))} for row in rows]
 
 
 @router.get("/{cohort_id}")

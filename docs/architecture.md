@@ -51,10 +51,12 @@ The API serves its routes **without** an `/api` prefix (`/healthz`, `/cohorts`, 
 | Method | Path (public) | Purpose | Success | Errors |
 |---|---|---|---|---|
 | `POST` | `/api/cohorts` | Create from a cohort definition (the request body is the definition itself) | `201`, `Location`, the cohort with `id` and `version` 1 | `422`, `413` |
-| `GET` | `/api/cohorts` | List summaries (`id`, `name`, `version`, `created_at`, `updated_at`), most recently updated first | `200` | |
+| `GET` | `/api/cohorts` | List summaries (`id`, `name`, `version`, `created_at`, `updated_at`, `last_run`), most recently updated first; `last_run` is `null` or `{status, final_count, created_at}` for the newest run | `200` | |
 | `GET` | `/api/cohorts/{id}` | One cohort including its `definition` | `200` | `404` |
 | `PUT` | `/api/cohorts/{id}` | Replace the definition; `version` increases by 1 | `200` | `404`, `422`, `413` |
 | `DELETE` | `/api/cohorts/{id}` | Delete the cohort and its runs | `204` | `404` |
+| `POST` | `/api/cohorts/{id}/runs` | **Run feasibility**: counts after every step, the final count and the baseline | `201` | `404`, `422`, `503`, `504`, `500` |
+| `GET` | `/api/cohorts/{id}/runs?limit=` | Run history, newest first (default 50, 1 to 100); counts only, no baseline | `200` | `404`, `422` |
 
 Rules that apply to every route:
 
@@ -67,15 +69,27 @@ Rules that apply to every route:
 - **Unknown routes and methods** use the same body (`{"error": "Not Found", "trace_id": ...}`).
 - Only definitions are handled here; no endpoint returns patient-level rows (FR-11).
 
-## Request flow: Run feasibility _(planned: run endpoint issue)_
+## Request flow: Run feasibility
 
-1. `POST /api/cohorts/{id}/runs` → span `cohort.run`
-2. `cohort.validate`: Pydantic validation of the stored definition
-3. `cohort.compile`: SQLAlchemy Core builds one CTE chain with bound parameters (`docs/cohort-engine.md`)
-4. `cohort.execute`: reader connection returns the count after every step in one round trip
-5. `cohort.baseline`: second query over the final cohort
-6. `cohort.suppress`: counts 1–10 become `"<11"`
-7. App connection inserts `cohort_run`; the response carries `X-Trace-Id`
+`POST /api/cohorts/{id}/runs` (no body):
+
+1. Load the saved definition (app connection) and validate it again with `parse_definition`; one that no longer passes (for example after a rule change) is a `422` with field errors and a run recorded as `failed`. An unknown or malformed id is a `404` and records nothing.
+2. Compile one CTE chain with bound parameters (`docs/cohort-engine.md`), count every step in **one statement**, then run the baseline (two aggregate statements), all on the **reader** connection under the 10 s statement timeout.
+3. Suppress: step counts and baseline cells of 1 to 10 become `"<11"`; comorbidities under 11 patients are left out.
+4. Record the run (app connection) and answer `201` with the run: `{id, cohort_id, status, step_counts: [{key, label, persons}], final_count, baseline, duration_ms, trace_id, service_version, created_at}`.
+
+What is stored in `cohort_run`: `status` (`success`, `failed` or `timeout`), `step_counts` (the **suppressed** values), `final_count` (an integer only when the final count is a real number; NULL when it is `"<11"`, so the exact small count is never stored; the API's `final_count` is read from the last step count), `duration_ms`, `trace_id`, `service_version`. **The baseline is returned with the run but not stored**, so the history shows counts only and the results screen shows the baseline right after a run; storing it would need an expand-only migration and is left for later.
+
+Failures are recorded too, and every answer carries the `X-Trace-Id` that is also stored on the run:
+
+| Situation | Response | Stored run |
+|---|---|---|
+| Statement timeout (10 s) | `504`, `"This cohort took longer than 10 seconds to count and was cancelled. Try a narrower index event, a shorter date range or fewer criteria, then run it again."`, plus `run_id` and `status` | `timeout` |
+| CDM database unreachable | `503` "The database is unavailable" (or "took too long to respond" for a lock timeout), plus `run_id` and `status` | `failed` |
+| Any other failure | `500` "Something went wrong running this cohort." plus the trace reference, `run_id` and `status`; the log line has the exception class and trace id only | `failed` |
+| App database down | `503`; the run cannot be stored | nothing |
+
+A timed-out run is a failed run for alerting purposes (`docs/observability.md`).
 
 ## Concept search
 
