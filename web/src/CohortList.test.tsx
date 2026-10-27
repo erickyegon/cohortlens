@@ -49,6 +49,16 @@ describe("Given the cohort list, then each row shows last run count and time", (
   });
 });
 
+describe("An API that predates last_run", () => {
+  it("reads a summary without a last_run as not run yet instead of breaking the page", async () => {
+    const { last_run: _omitted, ...withoutLastRun } = summary("z", "Old API", null);
+    mockApi({ "GET /cohorts": [withoutLastRun] });
+    render(<CohortList onNew={() => {}} onOpen={() => {}} />);
+    expect(await screen.findByText("Old API")).toBeInTheDocument();
+    expect(within(row("Old API")).getByText("Not run yet")).toBeInTheDocument();
+  });
+});
+
 describe("Opening and creating", () => {
   it("opens a cohort by its id", async () => {
     mockApi({ "GET /cohorts": COHORTS });

@@ -72,3 +72,41 @@ export const REFERENCE_COHORT = {
   created_at: "2026-10-27T10:00:00+00:00",
   updated_at: "2026-10-27T12:00:00+00:00",
 };
+
+/** Non-default values in every field, with every exposure an index event (so at most 3 rules, occurrences 1). */
+export const FULL_A = {
+  name: "Hypertension, women 18-65",
+  index_event: {
+    domain: "condition", concept_ids: [320128, 317898], include_descendants: false, first_occurrence_only: false,
+    date_range: { start: "2015-01-01", end: "2024-12-31" },
+  },
+  demographics: { age_min: 18, age_max: 65, sex: ["F"] },
+  observation: { prior_days: 30, post_days: 90 },
+  rules: [
+    {
+      label: "Statin before", type: "include", domain: "drug", concept_ids: [1539403], include_descendants: false,
+      window: { start_days: -90, end_days: 0 }, min_occurrences: 1,
+    },
+    {
+      label: "No stroke", type: "exclude", domain: "condition", concept_ids: [443454, 4043731],
+      include_descendants: true, window: { start_days: -36500, end_days: -1 }, min_occurrences: 1,
+    },
+  ],
+};
+
+/** Non-default values the other way: first occurrence only, a one-sided date range, repeated use (3 occurrences). */
+export const FULL_B = {
+  name: "Men to 40 on repeat therapy",
+  index_event: {
+    domain: "drug", concept_ids: [1308216], include_descendants: true, first_occurrence_only: true,
+    date_range: { start: "2020-06-01", end: null },
+  },
+  demographics: { age_min: null, age_max: 40, sex: ["M"] },
+  observation: { prior_days: 0, post_days: 365 },
+  rules: [
+    {
+      label: "Repeat use", type: "include", domain: "drug", concept_ids: [1308216], include_descendants: false,
+      window: { start_days: 1, end_days: 365 }, min_occurrences: 3,
+    },
+  ],
+};

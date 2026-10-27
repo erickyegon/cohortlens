@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Builder } from "./Builder";
-import { REFERENCE_COHORT, mockApi } from "./test-utils";
+import { FULL_A, FULL_B, REFERENCE_COHORT, mockApi } from "./test-utils";
 
 const ID = REFERENCE_COHORT.id;
 const open = () => render(<Builder cohortId={ID} onBack={() => {}} />);
@@ -270,5 +270,99 @@ describe("Saving", () => {
     await user.clear(screen.getByLabelText("Rule 1 minimum occurrences"));
     await user.type(screen.getByLabelText("Rule 1 minimum occurrences"), "2");
     expect(screen.getByText("With every exposure as an index event this must be 1")).toBeInTheDocument();
+  });
+});
+
+describe("Reopening restores non-default values in every field", () => {
+  const saved = (definition: typeof FULL_A | typeof FULL_B) => ({ ...REFERENCE_COHORT, name: definition.name, definition });
+
+  it.each([["A", FULL_A], ["B", FULL_B]])("definition %s", async (_name, definition) => {
+    mockApi({ [`GET /cohorts/${ID}`]: saved(definition) });
+    open();
+    await screen.findByDisplayValue(definition.name);
+    const index = definition.index_event;
+    expect(screen.getByLabelText("Index event domain")).toHaveValue(index.domain);
+    const chosen = screen.getByRole("list", { name: "Index concepts chosen" });
+    for (const id of index.concept_ids) expect(chosen).toHaveTextContent(`Concept ${id}`);
+    expect(within(chosen).getAllByRole("listitem")).toHaveLength(index.concept_ids.length);
+    expect(screen.getByLabelText("Include descendant concepts")).toHaveProperty("checked", index.include_descendants);
+    expect(screen.getByLabelText("First occurrence only")).toHaveProperty("checked", index.first_occurrence_only);
+    expect(screen.getByLabelText("Index date from")).toHaveValue(index.date_range?.start ?? "");
+    expect(screen.getByLabelText("Index date to")).toHaveValue(index.date_range?.end ?? "");
+    const demographics = definition.demographics;
+    expect(screen.getByLabelText("Minimum age")).toHaveValue(demographics.age_min === null ? "" : String(demographics.age_min));
+    expect(screen.getByLabelText("Maximum age")).toHaveValue(demographics.age_max === null ? "" : String(demographics.age_max));
+    expect(screen.getByLabelText("Female")).toHaveProperty("checked", demographics.sex.includes("F"));
+    expect(screen.getByLabelText("Male")).toHaveProperty("checked", demographics.sex.includes("M"));
+    expect(screen.getByLabelText("Days of observation before the index date")).toHaveValue(String(definition.observation.prior_days));
+    expect(screen.getByLabelText("Days of observation after the index date")).toHaveValue(String(definition.observation.post_days));
+    definition.rules.forEach((rule, i) => {
+      const n = i + 1;
+      expect(screen.getByLabelText(`Rule ${n} label`)).toHaveValue(rule.label);
+      expect(screen.getByLabelText(`Rule ${n} type`)).toHaveValue(rule.type);
+      expect(screen.getByLabelText(`Rule ${n} domain`)).toHaveValue(rule.domain);
+      expect(screen.getByLabelText(`Rule ${n} include descendants`)).toHaveProperty("checked", rule.include_descendants);
+      expect(screen.getByLabelText(`Rule ${n} window start (days from the index date)`)).toHaveValue(String(rule.window.start_days));
+      expect(screen.getByLabelText(`Rule ${n} window end (days from the index date)`)).toHaveValue(String(rule.window.end_days));
+      expect(screen.getByLabelText(`Rule ${n} minimum occurrences`)).toHaveValue(String(rule.min_occurrences));
+      const ruleChosen = screen.getByRole("list", { name: `Rule ${n} concepts chosen` });
+      expect(within(ruleChosen).getAllByRole("listitem")).toHaveLength(rule.concept_ids.length);
+    });
+  });
+});
+
+describe("Pressing Enter in a concept search box", () => {
+  it("does not submit the form", async () => {
+    const api = mockApi({ "GET /concepts?q=lisinopril&domain=drug": [] });
+    render(<Builder cohortId={null} onBack={() => {}} />);
+    await userEvent.setup().type(screen.getByLabelText("Index concepts"), "lisinopril{Enter}");
+    expect(api.writes()).toHaveLength(0);
+    expect(screen.queryByText("Give the cohort a name")).not.toBeInTheDocument(); // not even treated as a save attempt
+  });
+});
+
+describe("Errors are tied to their fields", () => {
+  it("marks the input invalid and describes it with the message", async () => {
+    mockApi({});
+    render(<Builder cohortId={null} onBack={() => {}} />);
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Minimum age"), "70");
+    await user.type(screen.getByLabelText("Maximum age"), "40");
+    const maximum = screen.getByLabelText("Maximum age");
+    expect(maximum).toBeInvalid();
+    expect(maximum).toHaveAccessibleDescription("The maximum age must not be below the minimum age");
+    expect(screen.getByLabelText("Minimum age")).toBeValid();
+  });
+
+  it("does the same for a rule field, the concept picker and the name", async () => {
+    mockApi({});
+    render(<Builder cohortId={null} onBack={() => {}} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Add rule" }));
+    await user.type(screen.getByLabelText("Rule 1 window start (days from the index date)"), "5");
+    await user.type(screen.getByLabelText("Rule 1 window end (days from the index date)"), "2");
+    const end = screen.getByLabelText("Rule 1 window end (days from the index date)");
+    expect(end).toBeInvalid();
+    expect(end).toHaveAccessibleDescription("The window must not end before it starts");
+    await user.click(screen.getByRole("button", { name: "Save cohort" }));
+    expect(screen.getByLabelText("Index concepts")).toBeInvalid();
+    expect(screen.getByLabelText("Index concepts")).toHaveAccessibleDescription("Choose at least one concept");
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription("Give the cohort a name");
+  });
+
+  it("does the same for an error that came from the server", async () => {
+    mockApi({
+      [`GET /cohorts/${ID}`]: REFERENCE_COHORT,
+      [`PUT /cohorts/${ID}`]: {
+        status: 422,
+        body: { error: "Invalid", trace_id: "t", errors: [{ field: "demographics.age_min", message: "Server: age out of range" }] },
+      },
+    });
+    open();
+    await screen.findByDisplayValue(REFERENCE_COHORT.name);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Save cohort" }));
+    await screen.findByText("Server: age out of range");
+    expect(screen.getByLabelText("Minimum age")).toBeInvalid();
+    expect(screen.getByLabelText("Minimum age")).toHaveAccessibleDescription("Server: age out of range");
   });
 });

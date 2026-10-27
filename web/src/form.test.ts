@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { emptyForm, moveRule, newRule, toDefinition, toForm, validate } from "./form";
 import type { CohortDefinition } from "./types";
-import { REFERENCE_DEFINITION } from "./test-utils";
+import { FULL_A, FULL_B, REFERENCE_DEFINITION } from "./test-utils";
 
 const reference = () => REFERENCE_DEFINITION as unknown as CohortDefinition;
 const valid = () => ({ ...toForm(reference()) });
@@ -11,6 +11,15 @@ describe("definition <-> form", () => {
   it("round-trips the reference cohort exactly", () => {
     expect(toDefinition(toForm(reference()))).toEqual(REFERENCE_DEFINITION);
   });
+
+  it.each([["A (every exposure, women, bounded dates)", FULL_A], ["B (first occurrence, repeat use)", FULL_B]])(
+    "round-trips a definition with non-default values in every field: %s",
+    (_name, definition) => {
+      const asDefinition = definition as unknown as CohortDefinition;
+      expect(toDefinition(toForm(asDefinition))).toEqual(definition);
+      expect(validate(toForm(asDefinition))).toEqual({});
+    },
+  );
 
   it("turns blank ages into null and a one-sided date range into a range with a null end", () => {
     const form = { ...valid(), age_min: "", age_max: "", date_start: "2020-01-01", date_end: "" };
