@@ -20,6 +20,7 @@ Semantics (what the compiler implements):
 - **Age** is whole years at the index date, adjusted for the birthday (a person who turns 50 on the index date is 50). If month or day of birth is missing, July 1 is assumed.
 - **`observation`**: the person needs one observation period covering at least `prior_days` before the index date and `post_days` after it. A gap between periods does not count.
 - **Order**: rules are evaluated and reported in list order; labels are the names in the attrition waterfall, which is why they must be unique.
+- **Cost cap for `first_occurrence_only: false`.** Every matching record then becomes an index row (about 266k for a broad drug concept on the demo seed) and each rule is probed once per row, which can outrun the 10 s statement timeout. `parse_definition` therefore allows at most 3 rules (`MAX_RULES_ALL_EVENTS`) and requires `min_occurrences` 1 on each, reporting `rules` and `rules.N.min_occurrences` errors together with any other field errors in one round. The cap is an input policy at `parse_definition`, not a limit of the compiler. The largest allowed definition (3 broad rules) takes about 1.6 s on the demo seed. Decision recorded in issue #37.
 - With `first_occurrence_only: false` a person can have several index events; counts are always numbers of **distinct persons**, and a person stays if any of their index events passes a step.
 
 Conventions:

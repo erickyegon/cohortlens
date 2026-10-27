@@ -51,3 +51,27 @@ def test_descendant_expansion_is_preserved(conn):
 def test_database_size_within_budget(conn):
     size_mb = conn.execute("select pg_database_size(current_database())/1024.0/1024.0").fetchone()[0]
     assert size_mb < 250, f"{size_mb:.0f} MB exceeds the 250 MB budget"
+
+
+def test_the_largest_allowed_all_events_cohort_finishes_inside_the_statement_timeout(conn):
+    """#37 criterion 2: with every exposure as an index event (about 266k index rows) parse_definition allows at most
+    3 rules with min_occurrences 1; that worst case must finish within the 10 s statement timeout (about 1.6 s on a
+    developer machine). The 5,568 final persons were captured from the engine, not derived by hand."""
+    from sqlalchemy import create_engine, func, select
+
+    from app.cohort_engine.compiler import build_plan
+    from app.cohort_engine.models import MAX_RULES_ALL_EVENTS, parse_definition
+
+    oral_product, clinical_finding = 36217214, 441840
+    rules = [{"label": f"rule {n}", "type": "include", "domain": "drug" if n % 2 == 0 else "condition",
+              "concept_ids": [oral_product if n % 2 == 0 else clinical_finding],
+              "window": {"start_days": -36500, "end_days": 36500}} for n in range(MAX_RULES_ALL_EVENTS)]
+    defn = parse_definition({"name": "all events", "rules": rules, "index_event": {
+        "domain": "drug", "concept_ids": [oral_product], "first_occurrence_only": False}})
+    last = build_plan(defn).steps[-1].cte
+    engine = create_engine(DSN.replace("postgresql://", "postgresql+psycopg://", 1))
+    with engine.connect() as connection:
+        connection.execute(select(func.set_config("statement_timeout", "10000", True)))
+        persons = connection.execute(select(func.count(func.distinct(last.c.person_id)))).scalar()
+    engine.dispose()
+    assert persons == 5568
