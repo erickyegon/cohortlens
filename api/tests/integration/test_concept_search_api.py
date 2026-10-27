@@ -214,3 +214,55 @@ def test_when_the_database_is_unreachable_the_response_is_a_503_with_a_trace_ref
     assert response.status_code == 503
     assert response.json()["trace_id"] == response.headers["x-trace-id"]
     assert "nothing" not in response.text and "127.0.0.1" not in response.text
+
+
+# ---- review round 1: ranking tiers, default limit and tie-breakers, pinned with extra concepts -----------------------
+
+@pytest.fixture()
+def extra_concepts(truth_engine):
+    """Insert (id, name) rows as valid standard Drug concepts for one test, committed so the API can see them."""
+    inserted = []
+
+    def add(*rows):
+        with truth_engine.connect() as conn:
+            for concept_id, name in rows:
+                conn.execute(text("insert into cdm.concept values (:i, :n, 'Drug', 'RxNorm', 'Ingredient', 'S', :c,"
+                                  " NULL)"),
+                             {"i": concept_id, "n": name, "c": f"t{concept_id}"})
+                inserted.append(concept_id)
+            conn.commit()
+
+    yield add
+    with truth_engine.connect() as conn:
+        for concept_id in inserted:
+            conn.execute(text("delete from cdm.concept where concept_id = :i"), {"i": concept_id})
+        conn.commit()
+
+
+def test_a_word_start_outranks_a_shorter_match_in_the_middle_of_a_word(client, extra_concepts):
+    extra_concepts((920001, "Bxylocaine"), (920002, "Zeta xylocaine"))  # mid-word and shorter vs word start
+    assert names(search(client, "xyl")) == ["Zeta xylocaine", "Bxylocaine"]
+
+
+def test_prefix_beats_word_start_beats_mid_word_whatever_the_length(client, extra_concepts):
+    # the longest name is the prefix match and the shortest is the mid-word match, so length alone would reverse this
+    extra_concepts((920003, "Xylx long prefix name here"), (920004, "A xylx"), (920005, "Mxylx"))
+    assert names(search(client, "xyl")) == ["Xylx long prefix name here", "A xylx", "Mxylx"]
+
+
+def test_without_a_limit_exactly_twenty_results_are_returned_and_fifty_is_allowed(client, extra_concepts):
+    extra_concepts(*[(921000 + n, f"Zorbit {n:02d}") for n in range(25)])
+    assert len(search(client, "zorbit").json()) == 20
+    assert len(search(client, "zorbit", limit=50).json()) == 25
+
+
+def test_equal_rank_and_length_are_ordered_by_name_then_by_id(client, extra_concepts):
+    extra_concepts((922003, "Wimble B"), (922001, "Wimble A"), (922005, "Wimble A"), (922002, "Wimble A"))
+    assert [(c["name"], c["concept_id"]) for c in search(client, "wimble").json()] == [
+        ("Wimble A", 922001), ("Wimble A", 922002), ("Wimble A", 922005), ("Wimble B", 922003)]
+
+
+def test_wildcard_characters_are_literal_when_ranking_too(client, extra_concepts):
+    # "q_" as an unescaped prefix pattern would match "qx and q_ here" at rank 0 and put it first
+    extra_concepts((923001, "qx and q_ here"), (923002, "ab q_ cd"))
+    assert names(search(client, "q_")) == ["ab q_ cd", "qx and q_ here"]
