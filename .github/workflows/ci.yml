@@ -50,8 +50,16 @@ jobs:
             api/requirements.txt
             api/requirements-dev.txt
       - run: pip install -r api/requirements.txt -r api/requirements-dev.txt
+      # make test also runs the frontend tests (Vitest), so the job needs Node and the web dependencies
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
       # Docker is available on the runner: the Testcontainers suites start real Postgres 16 containers.
-      - name: make test (unit + integration, Testcontainers)
+      - name: make test (unit + integration, Testcontainers, and Vitest)
         run: make test
       - name: Seed integration test against the committed seed
         run: bash data/etl/verify_seed.sh
