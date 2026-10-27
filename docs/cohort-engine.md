@@ -64,6 +64,13 @@ Details:
 - Truth-fixture values for the reference cohort, in engine order: 22, 21, 17, 15, 12, 10 (`test_attrition_counts.py`; the SQL oracle orders its steps differently but ends at 10).
 
 
+## Small-cell suppression (`suppression.py`)
+
+`suppress_count(n)` returns `0` for 0, the string `"<11"` for 1 to 10, and the exact number for 11 or more (`SMALL_CELL_THRESHOLD = 11`). `suppress_steps(step_counts)` turns the engine's exact `StepCount` list into `PublicStepCount(key, label, persons)`, the only shape the API may return for a waterfall; it has no person-level field. The module is pure logic (a test forbids database imports), and it rejects negative numbers (`ValueError`) and non-integers, booleans included (`TypeError`), rather than guess.
+
+- **Exact counts never leave the engine.** `StepCount` is internal; the run endpoint (#12) and the baseline (#10) must pass everything through this module before serialising.
+- **Known limitation: differencing.** When two adjacent steps are both 11 or more, their exact difference (the number a rule removed) can be 1 to 10 and is visible by subtraction. Masking each count is the rule the spec asks for (NFR-4); hiding derived differences would need complementary suppression, which is out of scope here and is a documented limitation for a synthetic-data demo.
+
 ## Worked examples
 
 Counts below are from the demo dataset (5,724 synthetic persons) and are unsuppressed because this is a development document about synthetic data; the API applies `"<11"` suppression. The SQL for the reference cohort is `data/etl/example_cohort.sql`.

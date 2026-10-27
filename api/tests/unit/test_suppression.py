@@ -8,7 +8,12 @@ import pytest
 
 from app.cohort_engine.attrition import StepCount
 from app.cohort_engine.suppression import (
-    SMALL_CELL_LABEL, SMALL_CELL_THRESHOLD, PublicStepCount, suppress_count, suppress_steps)
+    SMALL_CELL_LABEL,
+    SMALL_CELL_THRESHOLD,
+    PublicStepCount,
+    suppress_count,
+    suppress_steps,
+)
 
 MODULE = pathlib.Path(__file__).resolve().parents[2] / "app" / "cohort_engine" / "suppression.py"
 
