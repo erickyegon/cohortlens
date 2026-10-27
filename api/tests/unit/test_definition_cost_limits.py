@@ -26,10 +26,14 @@ def definition(rule_count, first_occurrence_only=False, **rule_overrides):
     return raw
 
 
-def errors_of(raw):
+def error_list(raw):
     with pytest.raises(DefinitionError) as caught:
         parse_definition(raw)
-    return {e["field"]: e["message"] for e in caught.value.errors}
+    return caught.value.errors
+
+
+def errors_of(raw):
+    return {e["field"]: e["message"] for e in error_list(raw)}
 
 
 def test_the_cap_is_three_rules():
@@ -116,3 +120,30 @@ def test_error_messages_never_echo_submitted_text():
 def test_the_cap_is_an_input_policy_not_a_limit_of_the_engine_model():
     # the compiler and its tests can still build uncapped definitions directly; parse_definition is the gate
     assert len(CohortDefinition.model_validate(definition(4, min_occurrences=2)).rules) == 4
+
+
+# ---- review round 1 on PR #43: gaps found by mutation testing ---------------------------------------------------
+
+def test_no_field_is_reported_twice():
+    for raw in (definition(4, min_occurrences=2), definition(11), definition(1, min_occurrences=500),
+                definition(12, min_occurrences=2)):
+        fields_reported = [e["field"] for e in error_list(raw)]
+        assert len(fields_reported) == len(set(fields_reported)), fields_reported
+
+
+def test_the_occurrence_cap_is_still_reported_when_there_are_more_than_ten_rules():
+    errors = errors_of(definition(11, min_occurrences=2))
+    assert "rules" in errors and all(f"rules.{n}.min_occurrences" in errors for n in range(11))
+
+
+def test_rules_that_are_not_a_list_get_the_ordinary_error_and_no_crash():
+    raw = definition(0)
+    raw["rules"] = {"label": "x"}
+    assert set(errors_of(raw)) == {"rules"}
+
+
+def test_a_rule_that_is_not_an_object_gets_the_ordinary_error_and_no_crash():
+    raw = definition(3)
+    raw["rules"][1] = "not a rule"
+    errors = errors_of(raw)
+    assert any(field.startswith("rules.1") for field in errors) and "rules.1.min_occurrences" not in errors

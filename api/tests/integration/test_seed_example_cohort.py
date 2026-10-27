@@ -53,10 +53,12 @@ def test_database_size_within_budget(conn):
     assert size_mb < 250, f"{size_mb:.0f} MB exceeds the 250 MB budget"
 
 
-def test_the_largest_allowed_all_events_cohort_finishes_inside_the_statement_timeout(conn):
-    """#37 criterion 2: with every exposure as an index event (about 266k index rows) parse_definition allows at most
-    3 rules with min_occurrences 1; that worst case must finish within the 10 s statement timeout (about 1.6 s on a
-    developer machine). The 5,568 final persons were captured from the engine, not derived by hand."""
+def test_a_broad_all_events_cohort_within_the_cap_finishes_inside_the_statement_timeout(conn):
+    """#37 criterion 2, one example: "Oral Product" (36217214) as the index with every exposure an index row (145,970
+    rows) and the maximum 3 rules with min_occurrences 1 over +-100-year windows finishes within the 10 s statement
+    timeout (about 1.6 s on a developer machine). This is NOT the worst allowed shape: the cap bounds work per index
+    row, not the size of the index set or the window width (see docs/cohort-engine.md). The 5,568 final persons were
+    captured from the engine and independently re-derived by the reviewer with separate SQL."""
     from sqlalchemy import create_engine, func, select
 
     from app.cohort_engine.compiler import build_plan
