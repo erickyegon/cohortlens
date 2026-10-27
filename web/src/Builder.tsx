@@ -59,6 +59,8 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
   const a11y = (path: string) =>
     errorFor(path) ? { "aria-invalid": true as const, "aria-describedby": errorId(path) } : {};
   const message = (path: string) => <Message path={path} text={errorFor(path)} />;
+  // the two date inputs share one message: the API reports a bad range on .end, a date outside 1900-2100 on .start
+  const datePath = errorFor("index_event.date_range.end") ? "index_event.date_range.end" : "index_event.date_range.start";
 
   const change = (patch: Partial<FormState>, ...paths: string[]) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -141,15 +143,15 @@ export function Builder({ cohortId, onBack, onSaved }: Props) {
         </label>
         <label>
           Index date from
-          <input type="date" value={form.date_start} {...a11y("index_event.date_range.end")}
+          <input type="date" value={form.date_start} {...a11y(datePath)}
             onChange={(e) => change({ date_start: e.target.value }, "index_event.date_range.end")} />
         </label>
         <label>
           Index date to
-          <input type="date" value={form.date_end} {...a11y("index_event.date_range.end")}
+          <input type="date" value={form.date_end} {...a11y(datePath)}
             onChange={(e) => change({ date_end: e.target.value }, "index_event.date_range.end")} />
         </label>
-        {message("index_event.date_range.end")}
+        {message(datePath)}
       </fieldset>
 
       <fieldset>
