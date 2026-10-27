@@ -75,7 +75,7 @@ describe("Given a completed run, then the final count and a bar for each step ar
     expect(screen.getByText("12,345")).toBeInTheDocument();
   });
 
-  it("shows no 'removed' differences between steps (they could be small numbers)", async () => {
+  it("does not print a 'removed' number per step (a presentation choice: the bars show where it shrinks)", async () => {
     loaded([run()]);
     show();
     await screen.findAllByRole("meter");
@@ -95,25 +95,36 @@ describe("Given a step with 1 to 10 patients, then it displays <11", () => {
     expect(within(waterfall).getAllByRole("listitem")[2]).toHaveTextContent("Step 3<11");
   });
 
-  it("still draws a bar for the suppressed step, described as <11 with no value", async () => {
+  it("draws the suppressed step as a labelled image, not as a meter with a value", async () => {
     loaded([small()]);
     show();
-    const bars = await screen.findAllByRole("meter");
-    expect(bars).toHaveLength(3);
-    expect(bars[2]).toHaveAttribute("aria-valuetext", "<11");
-    expect(bars[2]).not.toHaveAttribute("aria-valuenow");
-    expect((bars[2].firstElementChild as HTMLElement).style.width).not.toBe("0%");
+    await screen.findAllByRole("meter");
+    expect(screen.getAllByRole("meter")).toHaveLength(2); // only the steps with a real number are meters
+    const suppressed = screen.getByRole("img", { name: "Step 3: <11" });
+    expect(suppressed).not.toHaveAttribute("aria-valuenow");
   });
 
-  it("scales the bars to the first step even when that step is the largest", async () => {
+  it("draws the suppressed bar as an outline up to 10 patients wide, never a chunky bar that suggests more", async () => {
+    loaded([run({ step_counts: steps([1000, 11, "<11"]), final_count: "<11" })]);
+    show();
+    const meters = await screen.findAllByRole("meter");
+    const real = (meters[1].firstElementChild as HTMLElement).style.width; // 11 of 1000 = 1.1%
+    const outline = screen.getByRole("img", { name: "Step 3: <11" }).firstElementChild as HTMLElement;
+    expect(parseFloat(outline.style.width)).toBeGreaterThanOrEqual(parseFloat(real) * 0.9); // about 1%: up to 10
+    expect(parseFloat(outline.style.width)).toBeLessThan(5);
+    expect(outline.getAttribute("data-suppressed")).toBe("true");
+  });
+
+  it("uses a fixed small outline when even the first step is suppressed, so no scale is implied", async () => {
     loaded([run({ step_counts: steps(["<11", 0]), final_count: 0 })]);
     show();
-    const bars = await screen.findAllByRole("meter");
-    expect(bars[0]).toHaveAttribute("aria-valuetext", "<11");
-    expect(bars[1]).toHaveAttribute("aria-valuenow", "0");
-    expect(bars[1]).not.toHaveAttribute("aria-valuemax", "NaN");
+    const first = await screen.findByRole("img", { name: "Step 1: <11" });
+    expect((first.firstElementChild as HTMLElement).style.width).toBe("3%");
+    expect(screen.getByRole("meter", { name: "Step 2" })).toHaveAttribute("aria-valuenow", "0");
+    expect(screen.getByRole("meter", { name: "Step 2" })).not.toHaveAttribute("aria-valuemax", "NaN");
   });
 });
+
 
 describe("Given a failed run, then the user sees the reference", () => {
   it("shows 'Something went wrong. Reference: <trace id>' when the latest run failed", async () => {
@@ -125,23 +136,36 @@ describe("Given a failed run, then the user sees the reference", () => {
   });
 
   it("shows the reference when Run feasibility fails, and refreshes the history (the failure was recorded)", async () => {
+    let listed = 0;
+    const failedRun = run({ id: "r9", status: "failed", step_counts: null, final_count: null, trace_id: "cafe0002" });
     const api = loaded([], {
+      [RUNS]: () => (listed++ === 0 ? [] : [failedRun]), // the recorded failure appears in the history afterwards
       [RUN]: { status: 503, body: { error: "The database is unavailable.", trace_id: "cafe0002", run_id: "r9", status: "failed" } },
     });
     show();
     await screen.findByRole("button", { name: "Run feasibility" });
     await userEvent.setup().click(screen.getByRole("button", { name: "Run feasibility" }));
     expect(await screen.findByText("Something went wrong. Reference: cafe0002")).toBeInTheDocument();
+    await screen.findByRole("table", { name: "Run history" });
+    expect(screen.getAllByText(/Reference: cafe0002/, { selector: "p, span" })).toHaveLength(1); // not shown twice
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
     await waitFor(() => expect(api.calls.filter((c) => c.path === `/cohorts/${ID}/runs` && c.method === "GET")).toHaveLength(2));
   });
 
   it("shows the API's clear message for a timeout, with the reference", async () => {
     const message = "This cohort took longer than 10 seconds to count and was cancelled. Try a narrower index event.";
-    loaded([], { [RUN]: { status: 504, body: { error: message, trace_id: "feed0003", run_id: "r8", status: "timeout" } } });
+    let listed = 0;
+    const timedOut = run({ id: "r8", status: "timeout", step_counts: null, final_count: null, trace_id: "feed0003" });
+    loaded([], {
+      [RUNS]: () => (listed++ === 0 ? [] : [timedOut]),
+      [RUN]: { status: 504, body: { error: message, trace_id: "feed0003", run_id: "r8", status: "timeout" } },
+    });
     show();
     await userEvent.setup().click(await screen.findByRole("button", { name: "Run feasibility" }));
     expect(await screen.findByText(message)).toBeInTheDocument();
     expect(screen.getByText("Reference: feed0003")).toBeInTheDocument();
+    await screen.findByRole("table", { name: "Run history" });
+    expect(screen.getAllByRole("alert")).toHaveLength(1); // the clear message once, not repeated by the history
   });
 
   it("shows a timed-out run in the history with its status and reference", async () => {
@@ -185,6 +209,19 @@ describe("Given a cohort with several runs, then history is shown newest first",
     await userEvent.setup().click(within(within(history).getAllByRole("row")[3]).getByRole("button", { name: "View" }));
     expect(screen.getByTestId("final-count")).toHaveTextContent("100");
     expect(within(screen.getByRole("list", { name: "Attrition waterfall" })).getAllByRole("listitem")[0]).toHaveTextContent("200");
+  });
+
+  it("labels failed runs and formats a duration of a second or more", async () => {
+    loaded([
+      run({ id: "slow", duration_ms: 1500, created_at: "2026-10-27T09:00:00+00:00" }),
+      run({ id: "bad", status: "failed", step_counts: null, final_count: null, duration_ms: 40, trace_id: "bad0001",
+        created_at: "2026-10-27T08:00:00+00:00" }),
+    ]);
+    show();
+    const history = await screen.findByRole("table", { name: "Run history" });
+    const rows = within(history).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
+    expect(rows[0].slice(1, 4)).toEqual(["Success", "481", "1.5 s"]);
+    expect(rows[1].slice(1, 5)).toEqual(["Failed", "-", "40 ms", "bad0001"]);
   });
 
   it("says so when the cohort has never been run", async () => {
@@ -271,6 +308,19 @@ describe("Baseline table", () => {
     await userEvent.setup().click(await screen.findByRole("button", { name: "Run feasibility" }));
     expect(await screen.findByText("Conditions with fewer than 11 patients are not shown.")).toBeInTheDocument();
     expect(screen.queryByRole("table", { name: "Most common conditions" })).not.toBeInTheDocument();
+  });
+
+  it("shows the baseline only for the run it belongs to, not for another run in the history", async () => {
+    const other = run({ id: "other", created_at: "2026-10-20T08:00:00+00:00" });
+    loaded([other], { [RUN]: { status: 201, body: { ...run({ id: "fresh" }), baseline: BASELINE } } });
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Run feasibility" }));
+    await screen.findByRole("table", { name: "Baseline by age and sex" });
+    const history = screen.getByRole("table", { name: "Run history" });
+    await user.click(within(within(history).getAllByRole("row")[2]).getByRole("button", { name: "View" })); // the older run
+    expect(screen.queryByRole("table", { name: "Baseline by age and sex" })).not.toBeInTheDocument();
+    expect(screen.getByText("Run the cohort to see the baseline table.")).toBeInTheDocument();
   });
 
   it("is not stored with a run, so reopening the screen says to run the cohort to see it", async () => {
