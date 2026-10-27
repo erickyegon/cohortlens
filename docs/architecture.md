@@ -5,7 +5,7 @@ Status: living document. Sections marked _planned_ describe issues that are not 
 ## Components
 
 ```
-browser ──► web (nginx :8080, React build) ──/api──► api (FastAPI :8000) ──► Postgres 16
+browser ──► web (nginx :8080, React build) ──/api──► api (FastAPI :8000) ──► Postgres 18
                                                             │                 ├─ schema cdm  (OMOP, read-only)
                                                             │                 └─ schema app  (cohorts, runs)
                                                             └─ OTLP ─► lgtm (local) or Grafana Cloud   _planned_
@@ -13,7 +13,7 @@ browser ──► web (nginx :8080, React build) ──/api──► api (FastAP
 
 | Service | Image | Role |
 |---|---|---|
-| `db` | `postgres:16` | Loads the committed OMOP seed on first start; creates the two application roles |
+| `db` | `postgres:18` | Loads the committed OMOP seed on first start; creates the two application roles |
 | `migrate` | api image | One-shot `alembic upgrade head` for schema `app`, then exits |
 | `api` | `api/Dockerfile` (python:3.12-slim, non-root) | Cohort definitions, feasibility runs, health endpoints |
 | `web` | `web/Dockerfile` (node build → nginx) | UI; proxies `/api/` to `api` so there is no CORS |

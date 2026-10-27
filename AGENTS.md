@@ -1,7 +1,7 @@
 # AGENTS.md — CohortLens
 
 ## What CohortLens is
-CohortLens is a web app that tells a real-world-evidence scientist whether enough patients exist in an OMOP database to run a proposed study. A user defines a cohort, clicks **Run feasibility**, and sees the final count, an attrition waterfall and a baseline table. Stack: React/Vite/TypeScript, FastAPI, Postgres 16, OpenTelemetry → Grafana Cloud, Cloud Run + Neon. All data is synthetic.
+CohortLens is a web app that tells a real-world-evidence scientist whether enough patients exist in an OMOP database to run a proposed study. A user defines a cohort, clicks **Run feasibility**, and sees the final count, an attrition waterfall and a baseline table. Stack: React/Vite/TypeScript, FastAPI, Postgres 18, OpenTelemetry → Grafana Cloud, Cloud Run + Neon. All data is synthetic.
 
 ## Commands
 Docker Compose is the primary interface (`docker compose up --build`); `make` targets are optional shortcuts and need `make` installed.

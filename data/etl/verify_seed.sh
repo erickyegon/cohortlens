@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Load the committed seed into a throwaway Postgres 16 container and run the seed integration test.
+# Load the committed seed into a throwaway Postgres 18 container and run the seed integration test.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 NAME=cohortlens-seed-verify
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-docker run -d --name "$NAME" -e POSTGRES_PASSWORD=verify -e POSTGRES_DB=cohortlens -p 127.0.0.1::5432 postgres:16 >/dev/null
+docker run -d --name "$NAME" -e POSTGRES_PASSWORD=verify -e POSTGRES_DB=cohortlens -p 127.0.0.1::5432 postgres:18 >/dev/null
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 until docker exec "$NAME" pg_isready -U postgres -d cohortlens >/dev/null 2>&1; do sleep 1; done

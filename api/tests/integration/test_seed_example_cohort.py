@@ -1,6 +1,6 @@
 """Seed integration test: the reference cohort reproduces its documented attrition counts.
 
-Runs against a Postgres 16 database that has the committed seed loaded
+Runs against a Postgres 18 database that has the committed seed loaded
 (`make verify-seed` starts a throwaway container and sets COHORTLENS_TEST_DSN).
 Skipped only when no DSN is provided (a missing psycopg install fails loudly).
 """

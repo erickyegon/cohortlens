@@ -9,14 +9,15 @@ x-db-env: &db-env
 
 services:
   db:
-    image: postgres:16
+    image: postgres:18  # the same major version as the Neon project (docs/deployment.md)
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cohortlens_local}
       POSTGRES_DB: cohortlens
       COHORTLENS_READER_PASSWORD: ${COHORTLENS_READER_PASSWORD:-reader_local}
       COHORTLENS_APP_PASSWORD: ${COHORTLENS_APP_PASSWORD:-app_local}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18+ images keep the data in /var/lib/postgresql/<major>/docker, so the volume is mounted one level up
+      - pgdata:/var/lib/postgresql
       # run once, in name order, on first start of an empty data directory
       - ./db/init/00-roles.sh:/docker-entrypoint-initdb.d/00-roles.sh:ro
       - ./data/seed/omop_subset.sql.gz:/docker-entrypoint-initdb.d/10-omop_subset.sql.gz:ro
