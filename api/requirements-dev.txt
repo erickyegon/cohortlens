@@ -3,3 +3,4 @@ psycopg[binary]>=3.2,<4
 testcontainers[postgres]>=4.8,<5
 -r ../data/etl/requirements.txt
 ruff==0.15.7
+httpx>=0.27,<1
