@@ -114,10 +114,12 @@ React 18 + Vite + TypeScript in `web/`, served by nginx, which proxies `/api` to
 | `form.ts` | The builder's editing state (numbers as text while typing), conversion to and from the API definition, client-side validation keyed by the API's dotted field paths, `moveRule` |
 | `CohortList.tsx` | Saved cohorts with the last run's count (a suppressed count shows as `<11`) and time (fixed `YYYY-MM-DD HH:MM UTC` format), open and new |
 | `Builder.tsx`, `ConceptPicker.tsx` | The builder: index event with concept typeahead, demographics, observation window, up to 10 rules that can be reordered, toggled include/exclude and removed; saves with `POST` (new) or `PUT` (existing) |
+| `Results.tsx` | The results screen: **Run feasibility**, the final count, the attrition waterfall (one bar per step, scaled to the first step), the baseline tables and the run history |
 
 Behaviour worth knowing:
 
 - **Validation.** The form mirrors the cheap server rules (age order, windows, required fields, the rule cap and the all-events cap) so the user sees a field-level message before saving, and **Save does nothing while a field has an error**. Whatever the server still rejects (`422`) is shown on the matching field by the same dotted path. A failure with a trace id is shown as `Something went wrong. Reference: <trace id>` (FR-12).
+- **Results.** The newest run's steps are shown by default and any successful run in the history can be viewed. A suppressed count (`<11`) is shown as `<11` with a small bar that carries no number (the bar is a `meter` with `aria-valuetext`, not a value); the screen shows **no differences between steps**, because the number a rule removed could itself be a small count. A failed run shows `Something went wrong. Reference: <trace id>` (FR-12); a timeout shows the API's own message (which says what to change) and the reference. The baseline is returned only with a run (it is not stored), so it is shown right after a run and the screen says to run the cohort to see it after a reload. After a run, the history is reloaded, including after a failure, because failed and timed-out runs are recorded.
 - **Reopening** restores every field. The API stores concept ids only, so a concept chosen in an earlier session is shown as `Concept <id>`; one picked in this session shows its name.
 - **Tests.** Vitest + Testing Library with a stubbed `fetch` (`src/test-utils.ts`); `make test` and the CI `test` job run them. Browser end-to-end tests (Playwright, `make e2e`) are a separate, later item.
 

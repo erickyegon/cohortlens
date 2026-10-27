@@ -45,7 +45,7 @@ describe("Given a completed run, then the final count and a bar for each step ar
     loaded([run()]);
     show();
     expect(await screen.findByRole("heading", { name: REFERENCE_COHORT.name })).toBeInTheDocument();
-    expect(screen.getByText("Final count")).toBeInTheDocument();
+    expect(screen.getByText("Final count", { selector: "strong" })).toBeInTheDocument(); // not the history column header
     expect(screen.getByTestId("final-count")).toHaveTextContent("481");
   });
 
