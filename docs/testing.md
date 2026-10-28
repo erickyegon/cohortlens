@@ -1,8 +1,8 @@
 # Testing
 
-- `make test`: pytest unit + integration (Testcontainers, Postgres 16), telemetry leak test, Vitest, agent replay tests.
+- `make test`: pytest unit + integration (Testcontainers, Postgres 18), telemetry leak test, Vitest, agent replay tests.
 - `make e2e`: Playwright against Compose (separate CI job).
-- `make verify-seed`: load the committed seed into a throwaway Postgres 16 container and assert the reference cohort (920 → 481).
+- `make verify-seed`: load the committed seed into a throwaway Postgres 18 container and assert the reference cohort (920 → 481).
 - Quality gates: 80% line coverage on `api/app/cohort_engine/`; Ruff + ESLint clean; no real Anthropic API calls.
 - Dev dependencies: `pip install -r api/requirements-dev.txt` (Docker required for Testcontainers).
 

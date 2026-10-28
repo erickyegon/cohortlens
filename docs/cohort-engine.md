@@ -123,7 +123,7 @@ Anchoring on first hypertension diagnosis with a 30-day lisinopril start window 
 
 ## Performance (measured)
 
-Measured on the committed seed (5,724 persons, the production indexes, `ANALYZE` run by the seed) in PostgreSQL 16 in Docker on a developer laptop, with **every step counted in one statement** (`run_attrition`), median of three runs unless noted. "Broad concepts" are "Oral Product" (36217214, drugs) and "Clinical finding" (441840, conditions); the 10 rules alternate between them with a window of +-100 years. Absolute times depend on the machine; the ratios are what matter. `test_seed_engine_performance.py` enforces the first three rows against the seed (`make verify-seed`).
+Measured on the committed seed (5,724 persons, the production indexes, `ANALYZE` run by the seed) in PostgreSQL 16 in Docker (the suite and the seed tests were re-run on PostgreSQL 18 when the project moved to it, and all pass, including the latency budgets; the figures below were not re-measured) on a developer laptop, with **every step counted in one statement** (`run_attrition`), median of three runs unless noted. "Broad concepts" are "Oral Product" (36217214, drugs) and "Clinical finding" (441840, conditions); the 10 rules alternate between them with a window of +-100 years. Absolute times depend on the machine; the ratios are what matter. `test_seed_engine_performance.py` enforces the first three rows against the seed (`make verify-seed`).
 
 | Definition | Before | After |
 |---|---|---|

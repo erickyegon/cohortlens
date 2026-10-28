@@ -1,6 +1,6 @@
 """Truth fixture: 23 hand-built patients with exact expected counts for every criterion type.
 
-Loads api/tests/fixtures/truth_fixture.sql into a Postgres 16 Testcontainer and checks the reference
+Loads api/tests/fixtures/truth_fixture.sql into a Postgres 18 Testcontainer and checks the reference
 cohort SQL (the oracle the cohort engine must reproduce) against numbers written down independently
 in the fixture generator and docs/testing.md.
 
@@ -41,7 +41,7 @@ def oracle_ctes() -> str:
 
 @pytest.fixture(scope="module")
 def conn():
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("postgres:18") as pg:
         url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
         with psycopg.connect(url, autocommit=True) as c:
             c.execute(FIXTURE.read_text(encoding="utf-8"))

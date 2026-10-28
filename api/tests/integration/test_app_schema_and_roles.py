@@ -1,6 +1,6 @@
 """Issues #2 and #3: the database init scripts, the Alembic app schema and the two-role privilege model.
 
-Starts a Postgres 16 container with the real files mounted into /docker-entrypoint-initdb.d (roles script,
+Starts a Postgres 18 container with the real files mounted into /docker-entrypoint-initdb.d (roles script,
 committed OMOP seed, grants script), runs `alembic upgrade head` as the app role, then probes privileges
 as each role. Needs Docker, `pip install -r api/requirements.txt` (alembic, sqlalchemy) and the dev requirements
 (`api/requirements-dev.txt`, added by PR #28 together with the `make test` target; until both are merged run
@@ -41,7 +41,7 @@ def alembic(*args, port):
 @pytest.fixture(scope="module")
 def port():
     container = (
-        DockerContainer("postgres:16")
+        DockerContainer("postgres:18")
         .with_env("POSTGRES_PASSWORD", SUPER_PW).with_env("POSTGRES_DB", "cohortlens")
         .with_env("COHORTLENS_READER_PASSWORD", READER_PW).with_env("COHORTLENS_APP_PASSWORD", APP_PW)
         .with_volume_mapping((INIT / "00-roles.sh").as_posix(), "/docker-entrypoint-initdb.d/00-roles.sh", "ro")

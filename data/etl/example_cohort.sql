@@ -1,5 +1,5 @@
 -- Reference example cohort (docs/spec.md section 7) as plain SQL over the cdm schema.
--- Portable between Postgres 16 and DuckDB. Returns the attrition counts, one row per step.
+-- Portable between Postgres (16 to 18) and DuckDB. Returns the attrition counts, one row per step.
 -- Known limitation: age uses year/month/day of birth; a NULL month or day makes the birthday comparison NULL and
 -- the person counts as one year older. The seed and fixture always populate all three.
 -- Used by the seed integration test; the cohort engine must reproduce these numbers.

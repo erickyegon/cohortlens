@@ -58,7 +58,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
-      # Docker is available on the runner: the Testcontainers suites start real Postgres 16 containers.
+      # Docker is available on the runner: the Testcontainers suites start real Postgres 18 containers.
       - name: make test (unit + integration, Testcontainers, and Vitest)
         run: make test
       - name: Seed integration test against the committed seed

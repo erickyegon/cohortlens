@@ -1,6 +1,6 @@
 """Issue #37 on the committed seed (5,724 persons): the worst realistic cohort runs inside the latency budget.
 
-Runs against a Postgres 16 database with the committed seed loaded (`make verify-seed` sets COHORTLENS_TEST_DSN).
+Runs against a Postgres 18 database with the committed seed loaded (`make verify-seed` sets COHORTLENS_TEST_DSN).
 The expected step counts were captured from the engine BEFORE the performance change (results must not change, only
 the plan); the reference cohort's counts also match the SQL oracle (920 / 552 / 552 / 551 / 489 / 481 in engine order).
 

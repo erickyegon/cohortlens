@@ -1,4 +1,4 @@
-"""Shared integration fixtures: a Postgres 16 container loaded with the truth fixture (23 hand-built patients)."""
+"""Shared integration fixtures: a Postgres 18 container loaded with the truth fixture (23 hand-built patients)."""
 import pathlib
 
 import pytest
@@ -11,7 +11,7 @@ FIXTURE = pathlib.Path(__file__).resolve().parents[1] / "fixtures" / "truth_fixt
 @pytest.fixture(scope="session")
 def truth_engine():
     """SQLAlchemy engine on a throwaway Postgres with schema `cdm` and the truth fixture loaded."""
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("postgres:18") as pg:
         url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql+psycopg://")
         engine = create_engine(url)
         with engine.begin() as conn:
@@ -27,7 +27,7 @@ API_DIR = pathlib.Path(__file__).resolve().parents[2]
 
 @pytest.fixture(scope="session")
 def api_database_url():
-    """Throwaway Postgres 16 with schema `cdm` (truth fixture) and schema `app` (Alembic migration 0001 applied).
+    """Throwaway Postgres 18 with schema `cdm` (truth fixture) and schema `app` (Alembic migration 0001 applied).
 
     Both API connections point at it as the superuser: the two-role privilege model has its own tests
     (test_app_schema_and_roles.py).
@@ -36,7 +36,7 @@ def api_database_url():
     import subprocess
     import sys
 
-    with PostgresContainer("postgres:16") as pg:
+    with PostgresContainer("postgres:18") as pg:
         url = pg.get_connection_url().replace("postgresql+psycopg2://", "postgresql://")
         engine = create_engine(url.replace("postgresql://", "postgresql+psycopg://", 1))
         with engine.begin() as conn:
