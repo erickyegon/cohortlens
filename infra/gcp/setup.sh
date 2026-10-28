@@ -22,8 +22,8 @@
 # and an EXISTING provider or pool is verified (condition, state), never trusted blindly. It does not create projects,
 # billing accounts or budgets, and prints no secret.
 #
-# Before --apply: the GitHub environment `production` must exist with a required reviewer and deployment branches
-# limited to main. --apply checks that (read-only, through `gh`) and refuses otherwise (--skip-github-check overrides).
+# Before --apply: the GitHub environment `production` must exist with a required reviewer, administrator bypass off and
+# deployment branches limited to main (no tag rules). --apply checks that (read-only, `gh`); --skip-github-check overrides.
 set -euo pipefail
 export LC_ALL=C
 
@@ -72,15 +72,26 @@ if (( APPLY )); then
   else
     environment_url="repos/${GITHUB_REPO}/environments/production"
     reviewers="$(gh api "$environment_url" --jq '[.protection_rules[] | select(.type=="required_reviewers")] | length')" \
-      || die "the GitHub environment 'production' does not exist in ${GITHUB_REPO}; create it first (see docs/deployment.md)"
+      || die "the GitHub environment 'production' does not exist or cannot be read in ${GITHUB_REPO} (GitHub answers 404 for both; check that gh is signed in with access to the repository); create it first (see docs/deployment.md)"
     [[ "$reviewers" =~ ^[0-9]+$ ]] && (( reviewers >= 1 )) \
       || die "the GitHub environment 'production' has no required reviewer; add one first"
+    # administrators who may bypass the protection rules could deploy to production without the approval
+    bypass="$(gh api "$environment_url" --jq '.can_admins_bypass')" \
+      || die "could not read whether administrators can bypass the protection of 'production'"
+    [[ "$bypass" == "false" ]] \
+      || die "the GitHub environment 'production' lets administrators bypass its protection rules (found: '${bypass}'); turn off 'Allow administrators to bypass configured protection rules' first"
     custom="$(gh api "$environment_url" --jq '.deployment_branch_policy.custom_branch_policies')" \
       || die "could not read the deployment branch policy of 'production'"
     [[ "$custom" == "true" ]] || die "the GitHub environment 'production' must limit deployment branches to main (custom branch policy)"
-    branches="$(gh api "${environment_url}/deployment-branch-policies" --jq '[.branch_policies[].name] | sort | join(",")')" \
+    # only policies of type "branch" count: a tag policy named main is not the main branch
+    branches="$(gh api "${environment_url}/deployment-branch-policies" \
+      --jq '[.branch_policies[] | select(.type == "branch") | .name] | sort | join(",")')" \
       || die "could not read the deployment branches of 'production'"
     [[ "$branches" == "main" ]] || die "the GitHub environment 'production' must allow deployments from the main branch only (found: '${branches}')"
+    other_policies="$(gh api "${environment_url}/deployment-branch-policies" \
+      --jq '[.branch_policies[] | select(.type != "branch")] | length')" \
+      || die "could not read the deployment policies of 'production'"
+    [[ "$other_policies" == "0" ]] || die "the GitHub environment 'production' has a deployment policy that is not a branch policy (a tag rule would let tags deploy to production); remove it first"
   fi
   PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
   [[ "$PROJECT_NUMBER" =~ ^[0-9]+$ ]] || die "could not read the project number of ${PROJECT_ID}"
@@ -90,6 +101,10 @@ else
   OWNER_ID="<OWNER_ID>"
 fi
 
+EXPECTED_ISSUER="https://token.actions.githubusercontent.com"
+EXPECTED_MAPPING="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment"
+# the same mapping as gcloud prints it with --format='json(attributeMapping)' once whitespace is stripped (keys sorted)
+EXPECTED_MAPPING_JSON='{"attributeMapping":{"attribute.environment":"assertion.environment","attribute.ref":"assertion.ref","attribute.repository":"assertion.repository","google.subject":"assertion.sub"}}'
 EXPECTED_CONDITION="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}'"
 
 sa_email() { echo "cohortlens-$1-$2@${PROJECT_ID}.iam.gserviceaccount.com"; }   # kind (run|deploy), environment
@@ -122,6 +137,11 @@ ensure() {
       ENSURE_EXISTED=1
       echo "  exists: ${describe_args[*]}"
       return 0
+    elif grep -qiE 'permission|denied|forbidden|may not exist|or it may' <<< "$output"; then
+      # gcloud words some permission failures as "not found or permission denied" or "(or it may not exist)": that
+      # does not prove the resource is absent, so it is never a licence to create
+      echo "$output" >&2
+      die "could not tell whether this exists or access was denied (${describe_args[*]}); not creating anything on an ambiguous check"
     elif grep -qiE 'not[ _]?found|does not exist' <<< "$output"; then
       run "${create_args[@]}"
     else
@@ -170,8 +190,8 @@ fi
 ensure iam workload-identity-pools providers describe "$PROVIDER" "--workload-identity-pool=${POOL}" \
   --location=global "--project=${PROJECT_ID}" -- \
   iam workload-identity-pools providers create-oidc "$PROVIDER" "--workload-identity-pool=${POOL}" --location=global \
-  --issuer-uri=https://token.actions.githubusercontent.com \
-  "--attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment" \
+  "--issuer-uri=${EXPECTED_ISSUER}" \
+  "--attribute-mapping=${EXPECTED_MAPPING}" \
   "--attribute-condition=${EXPECTED_CONDITION}" \
   "--display-name=GitHub Actions" "--project=${PROJECT_ID}"
 if (( APPLY )) && (( ENSURE_EXISTED )); then
@@ -180,6 +200,15 @@ if (( APPLY )) && (( ENSURE_EXISTED )); then
     --location=global "--project=${PROJECT_ID}" --format='value(attributeCondition)')"
   [[ "$existing" == "$EXPECTED_CONDITION" ]] \
     || die "the existing provider '${PROVIDER}' has a different attribute condition than expected; refusing to build on it (condition found: '${existing}')"
+  # ... and only if it trusts GitHub's token issuer and maps exactly the attributes the bindings below rely on
+  issuer="$(gcloud iam workload-identity-pools providers describe "$PROVIDER" "--workload-identity-pool=${POOL}" \
+    --location=global "--project=${PROJECT_ID}" --format='value(oidc.issuerUri)')"
+  [[ "$issuer" == "$EXPECTED_ISSUER" ]] \
+    || die "the existing provider '${PROVIDER}' has a different issuer than expected; refusing to build on it (issuer found: '${issuer}')"
+  mapping="$(gcloud iam workload-identity-pools providers describe "$PROVIDER" "--workload-identity-pool=${POOL}" \
+    --location=global "--project=${PROJECT_ID}" --format='json(attributeMapping)' | tr -d ' \t\r\n')"
+  [[ "$mapping" == "$EXPECTED_MAPPING_JSON" ]] \
+    || die "the existing provider '${PROVIDER}' has a different attribute mapping than expected; refusing to build on it (mapping found: '${mapping}')"
 fi
 
 heading "who may impersonate which deploy account"

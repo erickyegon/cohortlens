@@ -55,7 +55,9 @@ args="$*"
 if [[ "$args" == *"projects describe"* ]]; then echo "${FAKE_NUMBER-24304250435}"; exit 0; fi
 if [[ "$args" == *" describe "* ]]; then
   if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
-  if [ "${FAKE_EXISTS:-0}" != "1" ]; then echo "ERROR: (gcloud) ${FAKE_NOT_FOUND-NOT_FOUND: resource not found}" >&2; exit 1; fi
+  if [ "${FAKE_EXISTS:-0}" != "1" ]; then
+    echo "ERROR: (gcloud) ${FAKE_NOT_FOUND-NOT_FOUND: resource not found}" >&2; exit 1
+  fi
   if [[ "$args" == *"attributeCondition"* ]]; then echo "${FAKE_CONDITION:-}"; fi
   if [[ "$args" == *"oidc.issuerUri"* ]]; then echo "${FAKE_ISSUER-}"; fi
   if [[ "$args" == *"attributeMapping"* ]]; then printf '%s\n' "${FAKE_MAPPING_JSON-}"; fi
@@ -70,7 +72,7 @@ FAKE_GH = r"""#!/usr/bin/env bash
 printf '%s\x1f' "$@" >> "$FAKE_GH_LOG"; printf '\n' >> "$FAKE_GH_LOG"
 args="$*"
 if [[ "$args" == *"deployment-branch-policies"* ]]; then
-  if [[ "$args" == *'.type!='* ]]; then echo "${FAKE_GH_NONBRANCH-0}"; else echo "${FAKE_GH_BRANCHES-main}"; fi
+  if [[ "$args" == *'!= "branch"'* ]]; then echo "${FAKE_GH_NONBRANCH-0}"; else echo "${FAKE_GH_BRANCHES-main}"; fi
   exit 0
 fi
 if [[ "$args" == *"environments/production"* ]]; then
