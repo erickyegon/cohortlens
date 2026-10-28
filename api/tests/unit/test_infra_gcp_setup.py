@@ -8,6 +8,7 @@ and one deploy service account per environment, Workload Identity Federation pin
 numeric IDs, and empty Secret Manager slots; be safe to run twice and never trust an existing resource blindly; never
 delete anything and never grant broad roles.
 """
+import json
 import os
 import pathlib
 import shlex
@@ -36,6 +37,15 @@ EXPECTED_CONDITION = (f"assertion.repository_id == '{REPO_ID}' && assertion.repo
                       f"&& assertion.repository == '{REPO}'")
 EXPECTED_MAPPING = ("google.subject=assertion.sub,attribute.repository=assertion.repository,"
                     "attribute.ref=assertion.ref,attribute.environment=assertion.environment")
+EXPECTED_ISSUER = "https://token.actions.githubusercontent.com"
+
+
+def mapping_json(mapping):
+    """What `gcloud ... --format=json(attributeMapping)` prints for a comma-separated k=v mapping (sorted, indented)."""
+    pairs = dict(item.split("=", 1) for item in mapping.split(","))
+    return json.dumps({"attributeMapping": pairs}, indent=2, sort_keys=True)
+
+
 POOL_ROOT = f"principalSet://iam.googleapis.com/projects/{NUMBER}/locations/global/workloadIdentityPools/github"
 
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
@@ -45,8 +55,12 @@ args="$*"
 if [[ "$args" == *"projects describe"* ]]; then echo "${FAKE_NUMBER-24304250435}"; exit 0; fi
 if [[ "$args" == *" describe "* ]]; then
   if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
-  if [ "${FAKE_EXISTS:-0}" != "1" ]; then echo "ERROR: (gcloud) NOT_FOUND: resource not found" >&2; exit 1; fi
+  if [ "${FAKE_EXISTS:-0}" != "1" ]; then
+    echo "ERROR: (gcloud) ${FAKE_NOT_FOUND-NOT_FOUND: resource not found}" >&2; exit 1
+  fi
   if [[ "$args" == *"attributeCondition"* ]]; then echo "${FAKE_CONDITION:-}"; fi
+  if [[ "$args" == *"oidc.issuerUri"* ]]; then echo "${FAKE_ISSUER-}"; fi
+  if [[ "$args" == *"attributeMapping"* ]]; then printf '%s\n' "${FAKE_MAPPING_JSON-}"; fi
   if [[ "$args" == *"value(state)"* ]]; then echo "${FAKE_POOL_STATE:-ACTIVE}"; fi
   exit 0
 fi
@@ -57,9 +71,13 @@ FAKE_GH = r"""#!/usr/bin/env bash
 # a fake `gh api`: answers the few read-only questions the script asks about the repository and its environment
 printf '%s\x1f' "$@" >> "$FAKE_GH_LOG"; printf '\n' >> "$FAKE_GH_LOG"
 args="$*"
-if [[ "$args" == *"deployment-branch-policies"* ]]; then echo "${FAKE_GH_BRANCHES-main}"; exit 0; fi
+if [[ "$args" == *"deployment-branch-policies"* ]]; then
+  if [[ "$args" == *'!= "branch"'* ]]; then echo "${FAKE_GH_NONBRANCH-0}"; else echo "${FAKE_GH_BRANCHES-main}"; fi
+  exit 0
+fi
 if [[ "$args" == *"environments/production"* ]]; then
   if [ "${FAKE_GH_ENV:-ok}" = "missing" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+  if [[ "$args" == *"can_admins_bypass"* ]]; then echo "${FAKE_GH_BYPASS-false}"; exit 0; fi
   if [[ "$args" == *"required_reviewers"* ]]; then echo "${FAKE_GH_REVIEWERS-1}"; exit 0; fi
   if [[ "$args" == *"custom_branch_policies"* ]]; then echo "${FAKE_GH_CUSTOM-true}"; exit 0; fi
 fi
@@ -75,17 +93,18 @@ def _install(directory, name, body):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def run_script(tmp_path, *args, exists=False, env=None, gcloud=FAKE_GCLOUD):
+def run_script(tmp_path, *args, exists=False, env=None, gcloud=FAKE_GCLOUD, gh=FAKE_GH):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _install(bin_dir, "gcloud", gcloud)
-    _install(bin_dir, "gh", FAKE_GH)
+    _install(bin_dir, "gh", gh)
     log, gh_log = tmp_path / "gcloud.log", tmp_path / "gh.log"
     log.write_text("", encoding="utf-8")
     gh_log.write_text("", encoding="utf-8")
     full_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_LOG": str(log),
                 "FAKE_GH_LOG": str(gh_log), "FAKE_EXISTS": "1" if exists else "0",
-                "FAKE_CONDITION": EXPECTED_CONDITION, **(env or {})}
+                "FAKE_CONDITION": EXPECTED_CONDITION, "FAKE_ISSUER": EXPECTED_ISSUER,
+                "FAKE_MAPPING_JSON": mapping_json(EXPECTED_MAPPING), **(env or {})}
     for name in ("PROJECT_ID", "REGION", "GITHUB_REPO"):
         if env is None or name not in env:
             full_env.pop(name, None)  # a developer's shell must not leak into the tests
@@ -140,7 +159,9 @@ def test_the_plan_is_copy_pasteable_so_the_condition_stays_one_argument(tmp_path
     line = next(item for item in result.stdout.splitlines() if "providers create-oidc" in item)
     parts = shlex.split(line)  # must parse back into separate arguments, the condition as one
     conditions = [part for part in parts if part.startswith("--attribute-condition=")]
-    assert len(conditions) == 1 and "assertion.repository_id" in conditions[0]
+    assert conditions == ["--attribute-condition=assertion.repository_id == '<REPO_ID>' "
+                          "&& assertion.repository_owner_id == '<OWNER_ID>' "
+                          f"&& assertion.repository == '{REPO}'"]  # the WHOLE condition, as one argument (F13)
 
 
 def test_the_plan_states_the_prerequisites_and_what_apply_will_check(tmp_path):
@@ -426,3 +447,144 @@ def test_it_prints_the_values_github_needs_and_no_secrets(tmp_path):
         assert f"cohortlens-{account}@{PROJECT}.iam.gserviceaccount.com" in out
     assert f"{REGION}-docker.pkg.dev/{PROJECT}/cohortlens" in out
     assert "password" not in out.lower() and "postgresql://" not in out
+
+
+# ---- round-2 review findings F10 to F14 ---------------------------------------------------------------------------
+# F10/F11 test the real jq expressions the script hands to `gh api --jq`, against GitHub-shaped JSON: a fake gh
+# that returned canned answers would never notice a wrong filter. They need the `jq` binary (present on CI runners).
+
+FAKE_GH_JSON = r"""#!/usr/bin/env bash
+# a fake `gh api` that serves GitHub-shaped JSON and applies the script's own --jq expression with real jq
+printf '%s\x1f' "$@" >> "$FAKE_GH_LOG"; printf '\n' >> "$FAKE_GH_LOG"
+endpoint=""; expr=""; previous=""
+for argument in "$@"; do
+  if [ "$previous" = "api" ]; then endpoint="$argument"; fi
+  if [ "$previous" = "--jq" ]; then expr="$argument"; fi
+  previous="$argument"
+done
+case "$endpoint" in
+  */deployment-branch-policies) document="$FAKE_POLICIES_JSON" ;;
+  */environments/production)
+    if [ "${FAKE_GH_ENV:-ok}" = "missing" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+    document="$FAKE_ENV_JSON" ;;
+  repos/*) document="$FAKE_REPO_JSON" ;;
+  *) exit 1 ;;
+esac
+if [ -n "$expr" ]; then printf '%s' "$document" | jq -r "$expr"; else printf '%s' "$document"; fi
+"""
+needs_jq = pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required to test the gh --jq expressions")
+
+
+def environment_json(reviewers=True, custom=True, bypass=False):
+    rules = [{"id": 1, "type": "wait_timer", "wait_timer": 0}]
+    if reviewers:
+        rules.append({"id": 2, "type": "required_reviewers", "prevent_self_review": False,
+                      "reviewers": [{"type": "User", "reviewer": {"id": 9, "login": "owner"}}]})
+    return json.dumps({"name": "production", "can_admins_bypass": bypass, "protection_rules": rules,
+                       "deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": custom}})
+
+
+def policies_json(*policies):
+    return json.dumps({"total_count": len(policies), "branch_policies": [
+        {"id": index, "name": name, "type": kind} for index, (name, kind) in enumerate(policies, start=1)]})
+
+
+def json_gh(tmp_path, *, environment=None, policies=None):
+    env = {"FAKE_ENV_JSON": environment or environment_json(),
+           "FAKE_POLICIES_JSON": policies or policies_json(("main", "branch")),
+           "FAKE_REPO_JSON": json.dumps({"id": int(REPO_ID), "owner": {"id": int(OWNER_ID), "login": "owner"}})}
+    return run_script(tmp_path, "--apply", gh=FAKE_GH_JSON, env=env)
+
+
+@needs_jq
+def test_f10_a_real_github_shaped_protected_environment_is_accepted(tmp_path):
+    result, calls = json_gh(tmp_path)
+    assert result.returncode == 0, result.stderr + result.stdout
+    provider = starting(calls, "iam", "workload-identity-pools", "providers", "create-oidc")[0]
+    assert flag(provider, "attribute-condition") == EXPECTED_CONDITION  # ids read through the real .id / .owner.id
+
+
+@needs_jq
+@pytest.mark.parametrize("policies", [
+    policies_json(("main", "tag")),                                # a TAG policy named main is not a branch policy
+    policies_json(("main", "branch"), ("v*", "tag")),              # main plus a tag rule would let tags deploy to prod
+    policies_json(("main", "branch"), ("dev", "branch")),
+    policies_json(("*", "branch")),
+    policies_json(),
+])
+def test_f10_only_a_branch_policy_for_main_and_nothing_else_is_accepted(tmp_path, policies):
+    result, calls = json_gh(tmp_path, policies=policies)
+    assert result.returncode != 0 and calls == []
+    assert "production" in (result.stderr + result.stdout)
+
+
+@needs_jq
+def test_f10_an_environment_that_lets_administrators_bypass_its_protection_is_refused(tmp_path):
+    result, calls = json_gh(tmp_path, environment=environment_json(bypass=True))
+    assert result.returncode != 0 and calls == []
+    assert "bypass" in (result.stderr + result.stdout).lower()
+
+
+@needs_jq
+@pytest.mark.parametrize("environment", [environment_json(reviewers=False), environment_json(custom=False)])
+def test_f11_the_reviewer_and_branch_filters_work_on_real_github_json(tmp_path, environment):
+    result, calls = json_gh(tmp_path, environment=environment)
+    assert result.returncode != 0 and calls == []
+
+
+def test_f10_the_script_asks_whether_administrators_can_bypass_and_for_non_branch_policies(tmp_path):
+    result, _ = run_script(tmp_path, "--apply", env={"FAKE_GH_BYPASS": "true"})
+    assert result.returncode != 0 and "bypass" in (result.stderr + result.stdout).lower()
+    result, _ = run_script(tmp_path, "--apply", env={"FAKE_GH_NONBRANCH": "1"})
+    assert result.returncode != 0 and "production" in (result.stderr + result.stdout)
+
+
+# F11: an existing provider is checked for its issuer and attribute mapping too, not only its condition
+@pytest.mark.parametrize("env", [
+    {"FAKE_ISSUER": "https://evil.example.com"}, {"FAKE_ISSUER": ""},
+    {"FAKE_MAPPING_JSON": mapping_json(EXPECTED_MAPPING + ",attribute.actor=assertion.actor")},
+    {"FAKE_MAPPING_JSON": mapping_json("google.subject=assertion.sub")},
+    {"FAKE_MAPPING_JSON": mapping_json(EXPECTED_MAPPING.replace("assertion.ref", "assertion.workflow"))},
+    {"FAKE_MAPPING_JSON": ""},
+])
+def test_f11_an_existing_provider_with_a_different_issuer_or_mapping_is_refused(tmp_path, env):
+    result, calls = run_script(tmp_path, "--apply", exists=True, env=env)
+    assert result.returncode != 0
+    assert not [c for c in calls if "add-iam-policy-binding" in c]  # stopped before granting anything
+
+
+def test_f11_an_existing_provider_with_the_expected_issuer_and_mapping_is_accepted(tmp_path):
+    _, calls = applied(tmp_path, exists=True)
+    described = [c for c in calls if c[:4] == ["iam", "workload-identity-pools", "providers", "describe"]]
+    assert len(described) >= 4  # the existence check, then the condition, the issuer and the mapping were each read
+
+
+# F12: the real gcloud messages. "may not exist" and "not found or permission denied" do not prove the resource is
+# absent, so they must stop the script; a plain NOT_FOUND still lets it create.
+@pytest.mark.parametrize("error", [
+    "PERMISSION_DENIED: Permission 'secretmanager.secrets.get' denied on resource 'projects/1/secrets/s' "
+    "(or it may not exist).",
+    "NOT_FOUND: Secret [projects/1/secrets/s] not found or permission denied.",
+    "Permission denied on resource project cohortlens. The resource may not exist.",
+])
+def test_f12_a_message_that_may_mean_permission_denied_is_not_treated_as_not_found(tmp_path, error):
+    result, calls = run_script(tmp_path, "--apply", env={"FAKE_NOT_FOUND": error})
+    assert result.returncode != 0
+    assert [c for c in calls if "create" in c or "create-oidc" in c] == []
+    assert not [c for c in calls if "add-iam-policy-binding" in c]
+
+
+@pytest.mark.parametrize("message", [
+    "NOT_FOUND: Requested entity was not found.", "NOT_FOUND: Unknown service account",
+    "Service account cohortlens-run-dev does not exist.",
+])
+def test_f12_a_plain_not_found_still_creates_the_resource(tmp_path, message):
+    _, calls = applied(tmp_path, env={"FAKE_NOT_FOUND": message})
+    assert starting(calls, "iam", "workload-identity-pools", "create")
+
+
+# F14: GitHub answers 404 both for a missing environment and for one the signed-in user cannot read
+def test_f14_the_environment_message_says_it_does_not_exist_or_cannot_be_read(tmp_path):
+    result, calls = run_script(tmp_path, "--apply", env={"FAKE_GH_ENV": "missing"})
+    assert result.returncode != 0 and calls == []
+    assert "does not exist or cannot be read" in result.stderr
