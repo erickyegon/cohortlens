@@ -91,7 +91,7 @@ deploy_service() {
     heading "${name}: first deploy (nothing is serving yet, so it goes live directly)"
     gcloud run deploy "$name" "${flags[@]}" "${TARGET[@]}"
     url="$(service_url "$name")"
-    "$SMOKE" "$url" "${smoke_args[@]}" || die "smoke test failed on the first deploy of ${name}"
+    bash "$SMOKE" "$url" "${smoke_args[@]}" || die "smoke test failed on the first deploy of ${name}"
     return 0
   fi
 
@@ -100,7 +100,7 @@ deploy_service() {
   url="$(service_url "$name")"
   candidate_url="${url/https:\/\//https:\/\/candidate---}"
   heading "${name}: smoke test on ${candidate_url}"
-  "$SMOKE" "$candidate_url" "${smoke_args[@]}" || die "smoke test failed on the candidate of ${name}; traffic was NOT moved"
+  bash "$SMOKE" "$candidate_url" "${smoke_args[@]}" || die "smoke test failed on the candidate of ${name}; traffic was NOT moved"
   heading "${name}: move traffic to the new revision"
   gcloud run services update-traffic "$name" --to-latest --remove-tags=candidate "${TARGET[@]}"
 }

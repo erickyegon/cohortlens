@@ -91,4 +91,4 @@ fi
 echo "Promoting to prod: version ${VERSION}"
 echo "  api ${API_IMAGE}"
 echo "  web ${WEB_IMAGE}"
-"$DEPLOY" --env prod --version "$VERSION" --api-image "$API_IMAGE" --web-image "$WEB_IMAGE"
+bash "$DEPLOY" --env prod --version "$VERSION" --api-image "$API_IMAGE" --web-image "$WEB_IMAGE"
