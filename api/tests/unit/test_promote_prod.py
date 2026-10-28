@@ -82,10 +82,10 @@ exit 0
 """
 
 
-def _install(directory, name, body):
+def _install(directory, name, body, executable=True):
     path = directory / name
     path.write_text(body, encoding="utf-8", newline="\n")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC if executable else 0o644)
 
 
 def run_promote(tmp_path, *args, env=None):
@@ -93,7 +93,7 @@ def run_promote(tmp_path, *args, env=None):
     bin_dir.mkdir(exist_ok=True)
     _install(bin_dir, "gcloud", FAKE_GCLOUD)
     _install(bin_dir, "curl", FAKE_CURL)
-    _install(bin_dir, "deploy", FAKE_DEPLOY)
+    _install(bin_dir, "deploy", FAKE_DEPLOY, executable=False)  # git stores our scripts as mode 100644
     logs = {name: tmp_path / f"{name}.log" for name in ("gcloud", "curl", "deploy")}
     for log in logs.values():
         log.write_text("", encoding="utf-8")
@@ -256,3 +256,11 @@ def test_the_web_service_is_resolved_the_same_way(tmp_path):
     split = traffic({"percent": 60, "revisionName": WEB_SERVING}, {"percent": 40, "revisionName": other})
     result, read = run_promote(tmp_path, env={"FAKE_WEB_TRAFFIC": split})
     assert result.returncode != 0 and deploy_call(read) is None
+
+
+def test_the_deploy_script_is_run_through_bash_because_git_stores_it_as_mode_100644():
+    """Same lesson as the dev deploy (`Permission denied` on the first real run): never execute a repository script
+    directly. Windows hides this (every file runs), Linux does not."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'bash "$DEPLOY"' in text
+    assert not [line for line in text.splitlines() if line.strip().startswith('"$DEPLOY"')]

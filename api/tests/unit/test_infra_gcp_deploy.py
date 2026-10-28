@@ -63,17 +63,17 @@ exit 0
 """
 
 
-def _install(directory, name, body):
+def _install(directory, name, body, executable=True):
     path = directory / name
     path.write_text(body, encoding="utf-8", newline="\n")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC if executable else 0o644)
 
 
 def run_deploy(tmp_path, *, env=None, args=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _install(bin_dir, "gcloud", FAKE_GCLOUD)
-    _install(bin_dir, "smoke", FAKE_SMOKE)
+    _install(bin_dir, "smoke", FAKE_SMOKE, executable=False)  # git stores our scripts as mode 100644
     log, smoke_log = tmp_path / "gcloud.log", tmp_path / "smoke.log"
     log.write_text("", encoding="utf-8")
     smoke_log.write_text("", encoding="utf-8")
@@ -318,3 +318,11 @@ def test_prod_refuses_the_dev_runtime_account(tmp_path):
 def test_dev_refuses_the_prod_runtime_account(tmp_path):
     result, calls, _ = run_deploy(tmp_path, env=PROD_ENV)  # --env dev with the prod account
     assert result.returncode != 0 and calls == []
+
+
+def test_the_smoke_script_is_run_through_bash_because_git_stores_it_as_mode_100644():
+    """The first real dev deploy failed with `smoke_cloud.sh: Permission denied`: the scripts are not executable in git
+    and the deploy called the smoke script directly. Windows hides this (every file runs), Linux does not."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'bash "$SMOKE"' in text
+    assert not [line for line in text.splitlines() if line.strip().startswith('"$SMOKE"')]
