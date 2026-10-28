@@ -78,7 +78,15 @@ Use the connection string exactly as Neon gives it (the host must end in `.neon.
 - *The seed failed*: nothing of it was kept (one transaction); run it again, and it reloads the seed because the database has no persons.
 - A plain re-run reports "passwords unchanged" when the roles and both secrets exist; it cannot tell whether the stored URL still works. After any doubt, `--rotate-passwords` makes them agree again.
 
-The confirmation exists so that a production connection string pasted by mistake is refused: the endpoint in the URL must be the one you typed. Needs `psql` or Docker (it falls back to the `postgres:18` image's `psql`). It is safe to run twice (existing roles keep their passwords, existing data is not reloaded); `--rotate-passwords` sets new passwords on the existing roles and stores new secret versions. It never drops, truncates or deletes anything. Prod is a separate, deliberate step, not supported by this script yet.
+The confirmation exists so that a production connection string pasted by mistake is refused: the endpoint in the URL must be the one you typed. Needs `psql` or Docker (it falls back to the `postgres:18` image's `psql`). It is safe to run twice (existing roles keep their passwords, existing data is not reloaded); `--rotate-passwords` sets new passwords on the existing roles and stores new secret versions. It never drops, truncates or deletes anything. **Prod** is the same script with extra guards (below), run after dev has been prepared.
+
+**Preparing prod (`--env prod`).** Same steps as above, with the **`production`** branch in the Neon console and its own variable and flags. In Git Bash, in the repository folder:
+1. In the Neon console open Branches → `production` → Connect, database `neondb`, role `neondb_owner`, **untick "Connection pooling"**, and copy the string. Its host starts with that branch's endpoint id, `ep-...`.
+2. `export NEON_PROD_URL='postgresql://neondb_owner:...@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require'`
+3. `bash scripts/seed_cloud.sh --env prod --confirm-endpoint ep-xxxx --yes-this-is-production`
+4. `unset NEON_PROD_URL`
+
+The extra guards for prod, all checked **before anything is touched**: it needs `--yes-this-is-production` (the flag is refused for dev); it reads its own variable, `NEON_PROD_URL`, and never `NEON_DEV_URL`; dev must already have been prepared (its stored secret must have a value); and **the endpoint must differ from the one dev uses**, read from dev's stored database URL in Secret Manager (compared and never printed). The same check runs the other way round for dev: a dev run refuses an endpoint that prod's stored secret already points at. That catches the mistake of pasting the wrong branch's connection string, which the endpoint confirmation alone cannot see.
 
 The cloud role SQL differs from the local init script in one way: the Neon owner is not a superuser, so the `app` schema is created by the owner and `cohortlens_app` is granted `USAGE, CREATE` on it (instead of `CREATE SCHEMA ... AUTHORIZATION cohortlens_app`). Rehearsed against a throwaway Postgres 18 with a non-superuser owner: roles, grants, password enforcement, the Alembic migration as `cohortlens_app`, a second run and a rotation all behaved as described. Not run against Neon itself.
 
@@ -97,7 +105,7 @@ The prod smoke test creates the reference cohort in the **prod** database, runs 
 
 Rollback by traffic shift is a separate workflow (#19).
 
-**Not possible yet:** the prod Neon branch has no roles, schema or seed and the two prod secrets have no value: `make seed-cloud` supports `dev` only. Until prod is prepared (a deliberate, separately approved step), a promotion will fail at the prod migration, before any revision exists. Nothing here has run against a real project.
+**Before the first promotion:** prepare the prod Neon branch with `seed_cloud.sh --env prod` (see above), which creates the prod roles, schema and seed and fills the two prod secrets. Until then a promotion fails at the prod migration, before any revision exists. A promotion has not run against the real project yet.
 
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.

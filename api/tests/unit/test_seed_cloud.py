@@ -127,9 +127,12 @@ def all_text(result, work):
 
 
 def secret_writes(work):
+    """The `secrets versions add` calls: (arguments, the value that was fed on stdin), matched by call number."""
     out = []
-    for args, stdin in zip(files(work, "gcloud_args"), files(work, "gcloud_stdin"), strict=False):
-        out.append((args.split(SEP)[:-1], stdin))
+    for path in sorted(work.glob("gcloud_stdin_*"), key=lambda item: int(item.name.rsplit("_", 1)[1])):
+        number = path.name.rsplit("_", 1)[1]
+        args = (work / f"gcloud_args_{number}").read_text(encoding="utf-8", errors="replace")
+        out.append((args.split(SEP)[:-1], path.read_text(encoding="utf-8", errors="replace")))
     return out
 
 
