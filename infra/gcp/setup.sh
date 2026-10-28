@@ -13,12 +13,19 @@
 #   - enables the APIs it needs
 #   - an Artifact Registry Docker repository
 #   - per environment (dev, prod): a runtime service account for Cloud Run and a deploy service account for GitHub
-#   - Workload Identity Federation (no keys): a pool and a GitHub OIDC provider that trusts ONLY GITHUB_REPO;
-#       dev deploys can be impersonated only from the main branch, prod only from the `production` GitHub environment
+#   - Workload Identity Federation (no keys): a pool and a GitHub OIDC provider that trusts ONLY this repository, pinned
+#       by name AND by GitHub's numeric repository and owner ids (read from GitHub at apply time), so a renamed or
+#       re-registered repository name cannot take its place. dev can be impersonated only from the main branch, prod
+#       only from jobs in the `production` GitHub environment.
 #   - four EMPTY Secret Manager slots (database URLs). Values are loaded by the Neon script, never here.
-# It never deletes or removes anything, grants no broad role, and is safe to run twice (it checks before creating).
-# It does not create projects, billing accounts or budgets, and prints no secret.
+# It never deletes or removes anything, grants no broad role, and is safe to run twice: it checks before creating,
+# and an EXISTING provider or pool is verified (condition, state), never trusted blindly. It does not create projects,
+# billing accounts or budgets, and prints no secret.
+#
+# Before --apply: the GitHub environment `production` must exist with a required reviewer and deployment branches
+# limited to main. --apply checks that (read-only, through `gh`) and refuses otherwise (--skip-github-check overrides).
 set -euo pipefail
+export LC_ALL=C
 
 PROJECT_ID="${PROJECT_ID-cohortlens}"
 REGION="${REGION-us-east5}"
@@ -32,23 +39,58 @@ ENVIRONMENTS=(dev prod)
 SECRET_KINDS=(app reader)
 
 APPLY=0
+SKIP_GITHUB_CHECK=0
 for argument in "$@"; do
   case "$argument" in
     --apply) APPLY=1 ;;
-    -h | --help) sed -n '2,23p' "$0"; exit 0 ;;
-    *) echo "unknown argument: $argument (use --apply or --help)" >&2; exit 2 ;;
+    --skip-github-check) SKIP_GITHUB_CHECK=1 ;;
+    -h | --help) sed -n '2,27p' "$0"; exit 0 ;;
+    *) echo "unknown argument: '$argument' (use --apply, --skip-github-check or --help)" >&2; exit 2 ;;
   esac
 done
 
+die() { echo "error: $*" >&2; exit 1; }
+
 [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || { echo "invalid PROJECT_ID" >&2; exit 2; }
 [[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || { echo "invalid REGION" >&2; exit 2; }
-[[ "$GITHUB_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "invalid GITHUB_REPO (expected owner/name)" >&2; exit 2; }
+if [[ "$GITHUB_REPO" =~ ^([A-Za-z0-9][A-Za-z0-9-]{0,38})/([A-Za-z0-9._-]{1,100})$ ]]; then
+  [[ "${BASH_REMATCH[2]}" != "." && "${BASH_REMATCH[2]}" != ".." ]] || { echo "invalid GITHUB_REPO" >&2; exit 2; }
+else
+  echo "invalid GITHUB_REPO (expected owner/name)" >&2; exit 2
+fi
 
 if (( APPLY )); then
+  # Read-only GitHub checks FIRST: nothing in Google Cloud is touched unless the repository and its production
+  # environment are what the trust model assumes.
+  command -v gh > /dev/null || die "the GitHub CLI (gh) is required to read the repository ids and check the environment"
+  REPO_ID="$(gh api "repos/${GITHUB_REPO}" --jq .id)" || die "could not read the repository id from GitHub"
+  OWNER_ID="$(gh api "repos/${GITHUB_REPO}" --jq .owner.id)" || die "could not read the repository owner id from GitHub"
+  [[ "$REPO_ID" =~ ^[0-9]+$ ]] || die "GitHub returned no valid repository id"
+  [[ "$OWNER_ID" =~ ^[0-9]+$ ]] || die "GitHub returned no valid repository owner id"
+  if (( SKIP_GITHUB_CHECK )); then
+    echo "WARNING: --skip-github-check: the production environment protection was NOT verified" >&2
+  else
+    environment_url="repos/${GITHUB_REPO}/environments/production"
+    reviewers="$(gh api "$environment_url" --jq '[.protection_rules[] | select(.type=="required_reviewers")] | length')" \
+      || die "the GitHub environment 'production' does not exist in ${GITHUB_REPO}; create it first (see docs/deployment.md)"
+    [[ "$reviewers" =~ ^[0-9]+$ ]] && (( reviewers >= 1 )) \
+      || die "the GitHub environment 'production' has no required reviewer; add one first"
+    custom="$(gh api "$environment_url" --jq '.deployment_branch_policy.custom_branch_policies')" \
+      || die "could not read the deployment branch policy of 'production'"
+    [[ "$custom" == "true" ]] || die "the GitHub environment 'production' must limit deployment branches to main (custom branch policy)"
+    branches="$(gh api "${environment_url}/deployment-branch-policies" --jq '[.branch_policies[].name] | sort | join(",")')" \
+      || die "could not read the deployment branches of 'production'"
+    [[ "$branches" == "main" ]] || die "the GitHub environment 'production' must allow deployments from the main branch only (found: '${branches}')"
+  fi
   PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+  [[ "$PROJECT_NUMBER" =~ ^[0-9]+$ ]] || die "could not read the project number of ${PROJECT_ID}"
 else
   PROJECT_NUMBER="<PROJECT_NUMBER>"
+  REPO_ID="<REPO_ID>"
+  OWNER_ID="<OWNER_ID>"
 fi
+
+EXPECTED_CONDITION="assertion.repository_id == '${REPO_ID}' && assertion.repository_owner_id == '${OWNER_ID}' && assertion.repository == '${GITHUB_REPO}'"
 
 sa_email() { echo "cohortlens-$1-$2@${PROJECT_ID}.iam.gserviceaccount.com"; }   # kind (run|deploy), environment
 secret_id() { echo "cohortlens-$1-database-url-$2"; }                          # environment, kind
@@ -56,24 +98,36 @@ pool_principal() { echo "principalSet://iam.googleapis.com/projects/${PROJECT_NU
 
 heading() { echo; echo "== $*"; }
 
-# run a gcloud command (apply) or print it (plan)
+# run a gcloud command (apply) or print it, shell-quoted so it can be copied (plan)
 run() {
   if (( APPLY )); then
     gcloud "$@"
   else
-    echo "  gcloud $*"
+    printf '  gcloud'; printf ' %q' "$@"; printf '\n'
   fi
 }
 
-# create only when the resource does not exist yet; the describe command is the one passed first
+ENSURE_EXISTED=0
+# ensure DESCRIBE-ARGS... -- CREATE-ARGS...   create only when the describe says NOT FOUND. Any other describe failure
+# (permission denied, API disabled, unavailable) stops the script instead of being mistaken for "does not exist".
 ensure() {
-  local describe_args=() create_args=() seen=0
+  local describe_args=() create_args=() seen=0 output
   for part in "$@"; do
     if [[ "$part" == "--" ]]; then seen=1; continue; fi
     if (( seen )); then create_args+=("$part"); else describe_args+=("$part"); fi
   done
-  if (( APPLY )) && gcloud "${describe_args[@]}" > /dev/null 2>&1; then
-    echo "  exists, skipped: ${describe_args[*]}"
+  ENSURE_EXISTED=0
+  if (( APPLY )); then
+    if output="$(gcloud "${describe_args[@]}" 2>&1)"; then
+      ENSURE_EXISTED=1
+      echo "  exists: ${describe_args[*]}"
+      return 0
+    elif grep -qiE 'not[ _]?found|does not exist' <<< "$output"; then
+      run "${create_args[@]}"
+    else
+      echo "$output" >&2
+      die "could not check whether this exists (${describe_args[*]}); not creating anything on a failed check"
+    fi
   else
     run "${create_args[@]}"
   fi
@@ -81,7 +135,13 @@ ensure() {
 
 echo "CohortLens Google Cloud setup"
 echo "  project: ${PROJECT_ID}   region: ${REGION}   github repository: ${GITHUB_REPO}"
-(( APPLY )) || echo "  PLAN ONLY: no command is run. Re-run with --apply to do it."
+if (( APPLY )); then
+  echo "  github repository id ${REPO_ID}, owner id ${OWNER_ID} (the provider is pinned to these)"
+else
+  echo "  PLAN ONLY: no command is run. Re-run with --apply to do it."
+  echo "  Before --apply: the GitHub environment 'production' must exist with a required reviewer and deployment"
+  echo "  branches limited to main. --apply reads the repository ids from GitHub and checks that, and refuses if not."
+fi
 
 heading "apis: enable what the deployment needs"
 run services enable "${APIS[@]}" "--project=${PROJECT_ID}"
@@ -103,13 +163,24 @@ done
 heading "workload identity federation: GitHub Actions without keys, only for ${GITHUB_REPO}"
 ensure iam workload-identity-pools describe "$POOL" --location=global "--project=${PROJECT_ID}" -- \
   iam workload-identity-pools create "$POOL" --location=global "--display-name=GitHub" "--project=${PROJECT_ID}"
+if (( APPLY )) && (( ENSURE_EXISTED )); then
+  state="$(gcloud iam workload-identity-pools describe "$POOL" --location=global "--project=${PROJECT_ID}" --format='value(state)')"
+  [[ "$state" == "ACTIVE" ]] || die "the existing workload identity pool '${POOL}' is in state '${state}', not ACTIVE; not continuing"
+fi
 ensure iam workload-identity-pools providers describe "$PROVIDER" "--workload-identity-pool=${POOL}" \
   --location=global "--project=${PROJECT_ID}" -- \
   iam workload-identity-pools providers create-oidc "$PROVIDER" "--workload-identity-pool=${POOL}" --location=global \
   --issuer-uri=https://token.actions.githubusercontent.com \
   "--attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.environment=assertion.environment" \
-  "--attribute-condition=assertion.repository == '${GITHUB_REPO}'" \
+  "--attribute-condition=${EXPECTED_CONDITION}" \
   "--display-name=GitHub Actions" "--project=${PROJECT_ID}"
+if (( APPLY )) && (( ENSURE_EXISTED )); then
+  # an existing provider is only acceptable if its trust condition is exactly the expected one
+  existing="$(gcloud iam workload-identity-pools providers describe "$PROVIDER" "--workload-identity-pool=${POOL}" \
+    --location=global "--project=${PROJECT_ID}" --format='value(attributeCondition)')"
+  [[ "$existing" == "$EXPECTED_CONDITION" ]] \
+    || die "the existing provider '${PROVIDER}' has a different attribute condition than expected; refusing to build on it (condition found: '${existing}')"
+fi
 
 heading "who may impersonate which deploy account"
 # dev: only workflows running on the main branch; prod: only jobs in the `production` GitHub environment
