@@ -4,6 +4,10 @@
 #
 #   bash scripts/store_otlp_secret.sh --env dev|prod --instance-id <Grafana Cloud instance id>
 #
+# Run it in a terminal window (Git Bash). It refuses to run with tracing on and it refuses piped input unless you pass
+# --stdin, which reads one line from a pipe and is for automation only: `echo <token> | script` puts the token in the
+# shell history.
+#
 # It asks for the API token with HIDDEN input (the token is never an argument, so it cannot end up in the shell history,
 # the process list, this chat or the screen), builds the header the OpenTelemetry exporter reads from
 # OTEL_EXPORTER_OTLP_HEADERS, `Authorization=Basic%20<base64 of instance-id:token>` (URL-encoded, as the OpenTelemetry
@@ -14,14 +18,22 @@
 set -euo pipefail
 export LC_ALL=C
 
-ENVIRONMENT="" INSTANCE_ID=""
+# tracing (bash -x, set -x, or SHELLOPTS=xtrace inherited from the caller) would print the token when it is expanded
+case "$-" in
+  *x*) echo "error: do not run this script with tracing (bash -x, set -x, SHELLOPTS=xtrace): it would print the token" >&2; exit 2 ;;
+esac
+# nothing inherited from the caller's environment may carry a value into gcloud
+unset TOKEN encoded header 2> /dev/null || true
+
+ENVIRONMENT="" INSTANCE_ID="" STDIN_OK=0
 while (( $# )); do
   case "$1" in
     --env | --instance-id)
       (( $# >= 2 )) || { echo "error: $1 needs a value" >&2; exit 2; }
       if [ "$1" = "--env" ]; then ENVIRONMENT="$2"; else INSTANCE_ID="$2"; fi
       shift 2 ;;
-    -h | --help) sed -n '2,13p' "$0"; exit 0 ;;
+    --stdin) STDIN_OK=1; shift ;;
+    -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1' (the token is asked for at a hidden prompt, never given as an argument)" >&2; exit 2 ;;
   esac
 done
@@ -42,8 +54,10 @@ if [ -t 0 ]; then
   printf 'Grafana Cloud OTLP token for %s (input is hidden, paste it and press Enter): ' "$ENVIRONMENT" >&2
   read -rs TOKEN || true
   echo >&2
-else
+elif (( STDIN_OK )); then
   read -r TOKEN || true
+else
+  refuse "there is no terminal to ask for the token at a hidden prompt. Run this in a Git Bash window (not through a pipe: piping a token puts it in your shell history). --stdin reads one line from a pipe and is meant for automation only"
 fi
 TOKEN="${TOKEN%$'\r'}"  # a pasted line may end in a carriage return (Windows terminals)
 [[ ${#TOKEN} -ge 20 && ! "$TOKEN" =~ [[:space:]] ]] || refuse "that does not look like a token (empty, shorter than 20 characters or containing whitespace); nothing was stored"

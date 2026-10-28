@@ -194,7 +194,8 @@ def test_the_script_asks_for_hidden_input_when_run_in_a_terminal():
 # ---- review findings of #70 ---------------------------------------------------------------------------------
 
 def test_a_token_piped_in_is_refused_unless_stdin_is_asked_for_explicitly(tmp_path):
-    """`echo <token> | script` puts the token in the shell history; the hidden prompt is the way, so piping is opt-in."""
+    """`echo <token> | script` puts the token in the shell history; the hidden prompt is the way, so piping is opt-in.
+    """
     result, work = run_store(tmp_path, "--env", "dev", "--instance-id", INSTANCE)
     assert result.returncode != 0 and calls(work) == []
     assert "terminal" in result.stderr.lower() and "--stdin" in result.stderr
