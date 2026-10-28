@@ -7,6 +7,7 @@ deployed by digest, checks they are digest-pinned and in this project's registry
 the approver was shown, and hands exactly those digests to infra/gcp/deploy.sh for production. It runs against a FAKE
 gcloud, a FAKE curl and a FAKE deploy script, so nothing touches a real project.
 """
+import json
 import os
 import pathlib
 import shutil
@@ -28,21 +29,41 @@ WEB_IMAGE = f"{REGISTRY}/web@sha256:{'b' * 64}"
 SHA = "0123456789abcdef0123456789abcdef01234567"
 OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
 SEP = "\x1f"
+API_SERVING, API_CANDIDATE = "cohortlens-api-dev-00002-aaa", "cohortlens-api-dev-00003-bbb"
+WEB_SERVING = "cohortlens-web-dev-00002-ccc"
+CANDIDATE_IMAGE = f"{REGISTRY}/api@sha256:{'c' * 64}"
+
+
+def traffic(*entries):
+    """The `status.traffic` of `gcloud run services describe --format=json` for a service."""
+    return json.dumps({"status": {"traffic": list(entries)}})
+
+
+SERVING_API = traffic({"percent": 100, "revisionName": API_SERVING})
+SERVING_WEB = traffic({"percent": 100, "revisionName": WEB_SERVING})
+
 
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
-printf '%s\x1f' "$@" >> "$FAKE_LOG"; printf '\n' >> "$FAKE_LOG"
+printf '%s' "$@" >> "$FAKE_LOG"; printf '
+' >> "$FAKE_LOG"
 args="$*"
+if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
 if [[ "$args" == *"run services describe"* ]]; then
-  if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
   if [[ "$args" == *"status.url"* ]]; then
     if [[ "$args" == *"cohortlens-api-dev"* ]]; then echo "https://cohortlens-api-dev-abc123-ul.a.run.app"; fi
     exit 0
   fi
-  if [[ "$args" == *"containers"* ]]; then
-    if [[ "$args" == *"cohortlens-api-dev"* ]]; then echo "${FAKE_API_IMAGE-}"; fi
-    if [[ "$args" == *"cohortlens-web-dev"* ]]; then echo "${FAKE_WEB_IMAGE-}"; fi
+  if [[ "$args" == *"--format=json"* ]]; then
+    if [[ "$args" == *"cohortlens-api-dev"* ]]; then printf '%s' "$FAKE_API_TRAFFIC"; fi
+    if [[ "$args" == *"cohortlens-web-dev"* ]]; then printf '%s' "$FAKE_WEB_TRAFFIC"; fi
     exit 0
   fi
+fi
+if [[ "$args" == *"run revisions describe"* ]]; then
+  if [[ "$args" == *"cohortlens-api-dev-00002"* ]]; then echo "${FAKE_API_IMAGE-}"; fi
+  if [[ "$args" == *"cohortlens-api-dev-00003"* ]]; then echo "${FAKE_CANDIDATE_IMAGE-}"; fi
+  if [[ "$args" == *"cohortlens-web-dev-00002"* ]]; then echo "${FAKE_WEB_IMAGE-}"; fi
+  exit 0
 fi
 exit 0
 """
@@ -80,6 +101,8 @@ def run_promote(tmp_path, *args, env=None):
                 "FAKE_CURL_LOG": str(logs["curl"]), "FAKE_DEPLOY_LOG": str(logs["deploy"]),
                 "DEPLOY_SCRIPT": str(bin_dir / "deploy"), "PROJECT_ID": PROJECT, "REGION": REGION,
                 "REGISTRY": REGISTRY, "RUNTIME_SA": PROD_SA, "FAKE_API_IMAGE": API_IMAGE, "FAKE_WEB_IMAGE": WEB_IMAGE,
+                "FAKE_CANDIDATE_IMAGE": CANDIDATE_IMAGE, "FAKE_API_TRAFFIC": SERVING_API,
+                "FAKE_WEB_TRAFFIC": SERVING_WEB,
                 "FAKE_HEALTHZ": f'{{"status":"ok","version":"{SHA}"}}', **(env or {})}
     result = subprocess.run([BASH, str(SCRIPT), *args], capture_output=True, text=True, env=full_env, timeout=60)
     read = {}
@@ -119,8 +142,8 @@ def test_it_deploys_to_prod_exactly_the_digests_dev_is_serving(tmp_path):
 def test_the_images_come_from_the_dev_services_not_from_a_tag_lookup(tmp_path):
     read = promoted(tmp_path)
     described = [" ".join(c) for c in read["gcloud"]]
-    assert any("cohortlens-api-dev" in line and "containers" in line for line in described)
-    assert any("cohortlens-web-dev" in line and "containers" in line for line in described)
+    assert any("revisions describe cohortlens-api-dev-00002-aaa" in line and "containers" in line for line in described)
+    assert any("revisions describe cohortlens-web-dev-00002-ccc" in line and "containers" in line for line in described)
     assert not any("artifacts" in line or "docker images" in line for line in described)  # tags are mutable
     assert all("-prod" not in line for line in described)  # reading dev touches nothing of prod
 
@@ -189,6 +212,7 @@ def test_bad_settings_are_refused_before_anything_runs(tmp_path, env):
 
 @pytest.mark.parametrize("args", [
     ["--expect-version", "latest"], ["--expect-version"], ["--force"], ["extra"], ["--expect-version", "a; echo hi"],
+    ["--expect-version", SHA[:12]],  # an abbreviated sha would never equal the full version dev reports
 ])
 def test_bad_arguments_are_refused_before_anything_runs(tmp_path, args):
     result, read = run_promote(tmp_path, *args)
@@ -200,3 +224,35 @@ def test_it_never_changes_dev_deletes_or_touches_iam(tmp_path):
     text = " ".join(" ".join(c) for c in read["gcloud"])
     for word in ("delete", "update-traffic", "deploy", "add-iam-policy-binding", "set-iam-policy", "--quiet"):
         assert word not in text, word
+
+
+# ---- finding A of the review: the image that SERVES traffic, not the newest template -----------------------------
+
+def test_a_failed_candidate_in_dev_never_reaches_prod_the_serving_image_does(tmp_path):
+    # a later dev deploy failed its smoke test: the newest revision (and its image) is a tagged candidate with no
+    # traffic, while the old revision still serves 100% and /healthz still reports the old version
+    pending = traffic({"percent": 100, "revisionName": API_SERVING},
+                      {"revisionName": API_CANDIDATE, "tag": "candidate", "url": "https://candidate---x.a.run.app"})
+    read = promoted(tmp_path, env={"FAKE_API_TRAFFIC": pending})
+    assert deploy_call(read)[deploy_call(read).index("--api-image") + 1] == API_IMAGE
+    described = " ".join(" ".join(c) for c in read["gcloud"])
+    assert API_CANDIDATE not in described  # the candidate's revision is never even read
+
+
+@pytest.mark.parametrize("api_traffic", [
+    traffic({"percent": 50, "revisionName": API_SERVING}, {"percent": 50, "revisionName": API_CANDIDATE}),
+    traffic({"percent": 0, "revisionName": API_SERVING}),
+    traffic(),
+    traffic({"percent": 100}),
+    json.dumps({"status": {}}), "not json", "",
+])
+def test_a_dev_service_that_does_not_have_exactly_one_revision_serving_all_traffic_is_refused(tmp_path, api_traffic):
+    result, read = run_promote(tmp_path, env={"FAKE_API_TRAFFIC": api_traffic})
+    assert result.returncode != 0 and deploy_call(read) is None
+
+
+def test_the_web_service_is_resolved_the_same_way(tmp_path):
+    other = "cohortlens-web-dev-00003-d"
+    split = traffic({"percent": 60, "revisionName": WEB_SERVING}, {"percent": 40, "revisionName": other})
+    result, read = run_promote(tmp_path, env={"FAKE_WEB_TRAFFIC": split})
+    assert result.returncode != 0 and deploy_call(read) is None
