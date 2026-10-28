@@ -50,7 +50,9 @@ if [[ "$args" == *"update-traffic"* ]]; then
 fi
 if [[ "$args" == *"run services describe"* ]]; then
   if [[ "$args" == *"status.url"* ]]; then
-    if [[ "$args" == *"cohortlens-api-"* ]]; then echo "$FAKE_API_URL"; else echo "$FAKE_WEB_URL"; fi
+    eol='\n'; [ "${FAKE_CRLF:-0}" = "1" ] && eol='\r\n'
+    if [[ "$args" == *"cohortlens-api-"* ]]; then url="$FAKE_API_URL"; else url="$FAKE_WEB_URL"; fi
+    printf "%s$eol" "$url"
     exit 0
   fi
   if [[ "$args" == *"cohortlens-api-"* ]]; then printf '%s' "$FAKE_API_TRAFFIC"
@@ -58,8 +60,9 @@ if [[ "$args" == *"run services describe"* ]]; then
   exit 0
 fi
 if [[ "$args" == *"run revisions list"* ]]; then
-  if [[ "$args" == *"--service=cohortlens-api-"* ]]; then printf '%s\n' $FAKE_API_REVISIONS; fi
-  if [[ "$args" == *"--service=cohortlens-web-"* ]]; then printf '%s\n' $FAKE_WEB_REVISIONS; fi
+  eol='\n'; [ "${FAKE_CRLF:-0}" = "1" ] && eol='\r\n'
+  if [[ "$args" == *"--service=cohortlens-api-"* ]]; then printf "%s$eol" $FAKE_API_REVISIONS; fi
+  if [[ "$args" == *"--service=cohortlens-web-"* ]]; then printf "%s$eol" $FAKE_WEB_REVISIONS; fi
   exit 0
 fi
 exit 0
@@ -287,3 +290,11 @@ def test_the_smoke_script_is_run_through_bash_because_git_stores_it_as_mode_1006
     text = SCRIPT.read_text(encoding="utf-8")
     assert 'bash "$SMOKE"' in text
     assert not [line for line in text.splitlines() if line.strip().startswith('"$SMOKE"')]
+
+
+def test_windows_line_endings_in_gcloud_output_are_tolerated(tmp_path):
+    """Found by a real dry run from a Windows machine: gcloud there prints CRLF, so every revision name and URL
+    carried a trailing carriage return and the serving revision was reported as 'not in the revision list'."""
+    _, seen = rolled_back(tmp_path, *API, env={"FAKE_CRLF": "1"})
+    assert f"--to-revisions={PREVIOUS}=100" in moves(seen)[0]
+    assert seen["smoke"] == [[API_URL]]

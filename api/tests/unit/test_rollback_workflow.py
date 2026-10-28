@@ -7,6 +7,22 @@ ROOT = pathlib.Path(__file__).resolve().parents[3]
 WORKFLOW = (ROOT / ".github" / "workflows" / "rollback.yml").read_text(encoding="utf-8")
 
 
+def run_blocks():
+    """The text of every `run: |` block, found by indentation (no YAML library needed)."""
+    lines, blocks = WORKFLOW.splitlines(), []
+    for index, line in enumerate(lines):
+        match = re.match(r"^(\s+)run: [|>]", line)
+        if not match:
+            continue
+        indent, body = len(match.group(1)), []
+        for following in lines[index + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            body.append(following)
+        blocks.append("\n".join(body))
+    return blocks
+
+
 def job(name):
     match = re.search(rf"^  {name}:\n((?:    .*\n|\n)*)", WORKFLOW, re.MULTILINE)
     assert match, name
@@ -45,7 +61,7 @@ def test_it_runs_only_on_main_and_not_until_the_google_cloud_variables_exist():
 
 
 def test_it_may_comment_on_issues_and_nothing_else_beyond_reading_the_repository():
-    assert re.search(r"permissions:\s*\n\s*contents: read\s*\n\s*id-token: write\s*\n\s*issues: write", WORKFLOW)
+    assert re.search(r"permissions:\s*\n\s*contents: read\s*\n\s*id-token: write[^\n]*\n\s*issues: write", WORKFLOW)
     assert "pull-requests: write" not in WORKFLOW and "contents: write" not in WORKFLOW
 
 
@@ -55,8 +71,8 @@ def test_it_waits_for_a_running_deploy_instead_of_racing_it():
 
 
 def test_inputs_reach_the_script_through_environment_variables_never_inline_in_the_shell():
-    run_blocks = re.findall(r"run: [>|]?-?\s*\n?((?:.|\n)*?)(?=\n      - |\Z)", WORKFLOW)
-    assert run_blocks and not any("${{ inputs." in block for block in run_blocks)
+    blocks = run_blocks()
+    assert len(blocks) == 2 and not any("${{" in block for block in blocks)
     assert "bash infra/gcp/rollback.sh" in WORKFLOW
 
 

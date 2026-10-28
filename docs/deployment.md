@@ -86,7 +86,7 @@ The confirmation exists so that a production connection string pasted by mistake
 3. `bash scripts/seed_cloud.sh --env prod --confirm-endpoint ep-xxxx --yes-this-is-production`
 4. `unset NEON_PROD_URL`
 
-The extra guards for prod, all checked **before anything is touched**: it needs `--yes-this-is-production` (the flag is refused for dev); it reads its own variable, `NEON_PROD_URL`, and never `NEON_DEV_URL`; dev must already have been prepared (its stored secret must have a value); and **the endpoint must differ from the one dev uses**, read from dev's stored database URL in Secret Manager (compared and never printed). The same check runs the other way round for dev: a dev run refuses an endpoint that prod's stored secret already points at. That catches the mistake of pasting the wrong branch's connection string, which the endpoint confirmation alone cannot see.
+The extra guards for prod, all checked **before anything is touched**: it needs `--yes-this-is-production` (the flag is refused for dev); it reads its own variable, `NEON_PROD_URL`, and never `NEON_DEV_URL`; dev must already have been prepared (its stored secret must have a value); and **the endpoint must differ from the one dev uses**, read from dev's stored database URL in Secret Manager (compared and never printed). The same check runs the other way round for dev: a dev run refuses an endpoint that prod's stored secret already points at. That catches the mistake of pasting the wrong branch's connection string, which the endpoint confirmation alone cannot see. If the other environment's secret cannot be listed or read (a gcloud access denial, a disabled latest version) or does not hold a readable database URL, the run stops before the database is touched; the guard looks only at the app secret of the other environment.
 
 The cloud role SQL differs from the local init script in one way: the Neon owner is not a superuser, so the `app` schema is created by the owner and `cohortlens_app` is granted `USAGE, CREATE` on it (instead of `CREATE SCHEMA ... AUTHORIZATION cohortlens_app`). Rehearsed against a throwaway Postgres 18 with a non-superuser owner: roles, grants, password enforcement, the Alembic migration as `cohortlens_app`, a second run and a rotation all behaved as described. Not run against Neon itself.
 
@@ -101,11 +101,36 @@ After approval, `promote.sh` does this and nothing else:
 2. asks the dev API which commit it runs (`/version`) and refuses if that is not the commit the approver was shown (dev moved on: start a new promotion);
 3. calls `deploy.sh --env prod` with **those same digests**: the migration job on the prod database first, then each service as a `--no-traffic` revision tagged `candidate`, a smoke test on its tagged URL, and only then the traffic move. A failed smoke test leaves traffic where it was and fails the run.
 
-The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. **If the web smoke test fails after the API went live**, prod runs the new API with the old web (the API is deployed and promoted first). Migrations are expand-then-contract, so the old web keeps working against the new API; fix forward or roll the API back (#19).
+The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. **If the web smoke test fails after the API went live**, prod runs the new API with the old web (the API is deployed and promoted first). Migrations are expand-then-contract, so the old web keeps working against the new API; fix forward or roll the API back (see Rollback below).
 
-Rollback by traffic shift is a separate workflow (#19).
+Rollback by traffic shift is a separate workflow (see Rollback below).
 
 **Before the first promotion:** prepare the prod Neon branch with `seed_cloud.sh --env prod` (see above), which creates the prod roles, schema and seed and fills the two prod secrets. Until then a promotion fails at the prod migration, before any revision exists. A promotion has not run against the real project yet.
+
+## Rollback (`.github/workflows/rollback.yml`, `infra/gcp/rollback.sh`)
+
+A rollback is a **traffic shift**, not a rebuild or a redeploy: Cloud Run revisions are immutable, so recovering means sending 100% of a service's traffic to a revision that already exists. It takes seconds.
+
+**To roll back (browser):** GitHub → the repository → **Actions** → **Rollback** → **Run workflow** (branch `main`) and fill in:
+- **environment** `dev` or `prod`, and **service** `api` or `web` (roll each service back separately);
+- **revision**: leave empty to go to the revision **before the one serving now**, or paste a revision name such as `cohortlens-api-dev-00002-abc` (the names are on the service's *Revisions* tab in the Cloud Run console);
+- **incident**: an issue number to have the result commented there (optional);
+- **dry run**: tick it first if unsure: it prints `from -> to` and changes nothing.
+
+A **prod** rollback runs in the protected `production` environment, so it waits for the reviewer's approval exactly like a promotion (**Review deployments → production → Approve and deploy**): the prod deploy account can only be used from that environment. A rollback also waits for a deploy or promotion that is already running instead of racing it.
+
+What `rollback.sh` checks and does, in this order:
+1. the service must have **exactly one revision serving all its traffic** (anything else is refused and nothing is changed);
+2. without `--revision` the target is the **next older** revision than the serving one, so a newer candidate that never served is never chosen; a given revision must be one of this service's own revisions (the name must match the environment and service) and must not be the one already serving; the oldest revision has no previous one;
+3. `gcloud run services update-traffic ... --to-revisions=<target>=100`;
+4. the **smoke test** on the service URL (the web service through its `/api` proxy); it checks that the rolled-back revision is alive and ready and runs the reference cohort. A failed smoke test **fails the run but does not move the traffic back**: that is a decision for a person;
+5. with an incident number, a **comment** on that issue: from revision, to revision, who started it, a link to the run, and whether the smoke test passed (or that it failed, or that the traffic was not moved). A comment that cannot be posted is a warning, not a failed rollback.
+
+It builds nothing, deploys nothing, deletes nothing and touches no IAM.
+
+**Rolling forward again.** A rollback pins the traffic to the chosen revision. The next dev deploy (or prod promotion) puts the new revision back in charge (`update-traffic --to-latest`). To go back sooner, run **Rollback** again with `revision` set to the newer revision.
+
+**Verified against the real project:** a `--dry-run` for dev `api` and `web` (it reads the real revisions and traffic and moves nothing). That run found a bug (Windows `gcloud` prints CRLF line endings, so revision names carried a trailing carriage return), now fixed and tested. **No real traffic move has been run yet.**
 
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.
