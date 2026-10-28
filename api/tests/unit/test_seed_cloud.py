@@ -59,6 +59,10 @@ if [[ "$*" == *"versions add"* ]]; then
   cat > "$FAKE_DIR/gcloud_stdin_$n"
   if [ "${FAKE_SECRET_WRITE_FAIL:-0}" = "1" ]; then echo "ERROR: write failed" >&2; exit 1; fi
 fi
+if [[ "$*" == *"versions access"* ]]; then
+  if [ -z "${FAKE_OTHER_URL-}" ] || [ "${FAKE_ACCESS_FAIL:-0}" = "1" ]; then echo "ERROR: access failed" >&2; exit 1; fi
+  printf '%s' "$FAKE_OTHER_URL"; exit 0
+fi
 printf 'gcloud %s\n' "$n" >> "$FAKE_DIR/order"
 if [[ "$*" == *"versions list"* ]]; then echo "${FAKE_SECRET_VERSION-projects/1/secrets/s/versions/1}"; fi
 exit 0
@@ -71,7 +75,16 @@ def _install(directory, name, body):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def run_seed(tmp_path, *args, env=None, admin_url=ADMIN_URL, confirm=True):
+OTHER_ENDPOINT = "ep-other-env-999999"
+OTHER_PASSWORD = "other" + secrets.token_hex(8)
+OTHER_URL = f"postgresql://cohortlens_app:{OTHER_PASSWORD}@{OTHER_ENDPOINT}.us-east-2.aws.neon.tech/neondb?sslmode=require"
+PROD_ENDPOINT = "ep-warm-prod-654321"
+PROD_HOST = f"{PROD_ENDPOINT}.us-east-2.aws.neon.tech"
+PROD_URL = f"postgresql://neondb_owner:{OWNER_PASSWORD}@{PROD_HOST}/neondb?sslmode=require"
+PROD_ARGS = ("--env", "prod", "--confirm-endpoint", PROD_ENDPOINT, "--yes-this-is-production")
+
+
+def run_seed(tmp_path, *args, env=None, admin_url=ADMIN_URL, confirm=True, url_var="NEON_DEV_URL"):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     work = tmp_path / "work"
@@ -79,10 +92,14 @@ def run_seed(tmp_path, *args, env=None, admin_url=ADMIN_URL, confirm=True):
     _install(bin_dir, "psql", FAKE_PSQL)
     _install(bin_dir, "gcloud", FAKE_GCLOUD)
     full_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_DIR": str(work),
-                "PROJECT_ID": "cohortlens", **(env or {})}
-    full_env.pop("NEON_DEV_URL", None)
+                "PROJECT_ID": "cohortlens", "FAKE_OTHER_URL": OTHER_URL, **(env or {})}
+    for name in ("NEON_DEV_URL", "NEON_PROD_URL"):
+        full_env.pop(name, None)
     if admin_url is not None:
-        full_env["NEON_DEV_URL"] = admin_url
+        full_env[url_var] = admin_url
+    for name, value in (env or {}).items():
+        if name in ("NEON_DEV_URL", "NEON_PROD_URL"):
+            full_env[name] = value
     if not args:
         args = ("--env", "dev") + (("--confirm-endpoint", ENDPOINT) if confirm else ())
     result = subprocess.run([BASH, str(SCRIPT), *args], capture_output=True, text=True, env=full_env, timeout=120,
@@ -344,7 +361,9 @@ def test_a_failed_secret_write_during_rotation_says_how_to_recover(tmp_path):
 def test_only_enabled_secret_versions_count_as_a_stored_value(tmp_path):
     _, work = seeded(tmp_path, env={"FAKE_ROLES_EXIST": "2", "FAKE_PERSON_BEFORE": "5724"})
     listing = [args for args in files(work, "gcloud_args") if "list" in args.split(SEP)]
-    assert len(listing) == 2 and all("--filter=state=enabled" in args.split(SEP) for args in listing)
+    own_secrets = ("cohortlens-dev-database-url-app", "cohortlens-dev-database-url-reader")
+    own = [args for args in listing if any(name in args for name in own_secrets)]
+    assert len(own) == 2 and all("--filter=state=enabled" in args.split(SEP) for args in listing)
 
 
 @pytest.mark.parametrize("host", [f"{ENDPOINT}.example.com", ENDPOINT, f"{ENDPOINT}.neon.tech.evil.io"])
@@ -352,3 +371,90 @@ def test_a_host_that_is_not_a_neon_host_is_refused(tmp_path, host):
     url = f"postgresql://neondb_owner:{OWNER_PASSWORD}@{host}/neondb?sslmode=require"
     result, work = run_seed(tmp_path, admin_url=url)
     assert result.returncode != 0 and files(work, "psql_args") == []
+
+
+# ---- production (the extra guards) ------------------------------------------------------------------------------
+
+def test_prod_needs_its_own_url_variable_the_endpoint_and_the_explicit_production_flag(tmp_path):
+    cases = (
+        (("--env", "prod", "--confirm-endpoint", PROD_ENDPOINT), {"admin_url": PROD_URL}),            # no flag
+        (PROD_ARGS, {"admin_url": None}),                                                             # no URL
+        (PROD_ARGS, {"admin_url": None, "env": {"NEON_DEV_URL": PROD_URL}}),                         # DEV variable only
+        (("--env", "prod", "--confirm-endpoint", ENDPOINT, "--yes-this-is-production"), {"admin_url": PROD_URL}),
+    )
+    for args, kwargs in cases:
+        result, work = run_seed(tmp_path, *args, url_var="NEON_PROD_URL", **kwargs)
+        assert result.returncode != 0, args
+        assert files(work, "psql_args") == [] and files(work, "gcloud_args") == []
+
+
+def test_the_production_flag_is_refused_for_dev(tmp_path):
+    result, work = run_seed(tmp_path, "--env", "dev", "--confirm-endpoint", ENDPOINT, "--yes-this-is-production")
+    assert result.returncode != 0 and files(work, "psql_args") == []
+
+
+def test_prod_seeds_the_prod_branch_and_stores_the_prod_secrets(tmp_path):
+    result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL")
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert set(written_urls(work)) == {"cohortlens-prod-database-url-app", "cohortlens-prod-database-url-reader"}
+    for url in written_urls(work).values():
+        assert f"@{PROD_HOST}/neondb?sslmode=require" in url
+    assert f"PGHOST={PROD_HOST}" in files(work, "psql_env")[0]
+    assert "GCP_PROJECT_ID" not in result.stdout  # the dev-deploy hint is for dev only
+    assert "prod" in result.stdout.lower()
+
+
+def test_prod_uses_the_prod_variable_even_when_the_dev_variable_is_also_set(tmp_path):
+    result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL",
+                            env={"NEON_DEV_URL": ADMIN_URL})
+    assert result.returncode == 0 and f"PGHOST={PROD_HOST}" in files(work, "psql_env")[0]
+
+
+def test_prod_refuses_an_endpoint_that_dev_already_uses_before_touching_the_database(tmp_path):
+    dev_url = f"postgresql://cohortlens_app:{OTHER_PASSWORD}@{PROD_HOST}/neondb?sslmode=require"
+    result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL",
+                            env={"FAKE_OTHER_URL": dev_url})
+    assert result.returncode != 0 and "dev" in result.stderr.lower()
+    assert files(work, "psql_args") == [] and secret_writes(work) == []
+    assert OTHER_PASSWORD not in all_text(result, work) and OWNER_PASSWORD not in all_text(result, work)
+
+
+def test_dev_refuses_an_endpoint_that_prod_already_uses(tmp_path):
+    prod_url = f"postgresql://cohortlens_app:{OTHER_PASSWORD}@{HOST}/neondb?sslmode=require"
+    result, work = run_seed(tmp_path, env={"FAKE_OTHER_URL": prod_url})
+    assert result.returncode != 0 and "prod" in result.stderr.lower()
+    assert files(work, "psql_args") == [] and secret_writes(work) == []
+
+
+def test_prod_is_refused_until_dev_has_been_prepared(tmp_path):
+    result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL",
+                            env={"FAKE_SECRET_VERSION": ""})
+    assert result.returncode != 0 and "dev" in result.stderr.lower()
+    assert files(work, "psql_args") == []
+
+
+def test_dev_does_not_need_prod_to_exist_yet(tmp_path):
+    result, _ = run_seed(tmp_path, env={"FAKE_SECRET_VERSION": ""})
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_a_secret_that_cannot_be_read_stops_the_run_before_the_database(tmp_path):
+    result, work = run_seed(tmp_path, env={"FAKE_ACCESS_FAIL": "1"})
+    assert result.returncode != 0 and files(work, "psql_args") == []
+
+
+def test_the_other_environments_secret_is_read_not_printed_and_only_by_reference(tmp_path):
+    result, work = seeded(tmp_path)
+    reads = [args.split(SEP)[:-1] for args in files(work, "gcloud_args") if "access" in args.split(SEP)]
+    assert len(reads) == 1
+    assert "--secret=cohortlens-prod-database-url-app" in reads[0] and "--project=cohortlens" in reads[0]
+    assert OTHER_PASSWORD not in all_text(result, work) and OTHER_ENDPOINT not in result.stdout
+
+
+def test_prod_can_be_run_twice_and_rotated_like_dev(tmp_path):
+    existing = {"FAKE_ROLES_EXIST": "2", "FAKE_PERSON_BEFORE": "5724"}
+    second, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL", env=existing)
+    assert second.returncode == 0 and secret_writes(work) == []
+    rotated, work = run_seed(tmp_path, *PROD_ARGS, "--rotate-passwords", admin_url=PROD_URL, url_var="NEON_PROD_URL",
+                             env=existing)
+    assert rotated.returncode == 0 and len(secret_writes(work)) == 2
