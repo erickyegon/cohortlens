@@ -29,6 +29,7 @@ SEP = "\x1f"
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
 n=$(( $(cat "$FAKE_DIR/count" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_DIR/count"
 printf '%s\x1f' "$@" > "$FAKE_DIR/args_$n"
+env > "$FAKE_DIR/env_$n"
 args="$*"
 if [[ "$args" == *"versions add"* ]]; then cat > "$FAKE_DIR/stdin_$n"; fi
 if [[ "$args" == *"secrets describe"* ]]; then
@@ -49,7 +50,7 @@ def _install(directory, name, body):
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-def run_store(tmp_path, *args, token=TOKEN + "\n", env=None):
+def run_store(tmp_path, *args, token=TOKEN + "\n", env=None, shell=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     work = tmp_path / "work"
@@ -58,8 +59,9 @@ def run_store(tmp_path, *args, token=TOKEN + "\n", env=None):
     full_env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_DIR": str(work),
                 "PROJECT_ID": "cohortlens", **(env or {})}
     if not args:
-        args = ("--env", "dev", "--instance-id", INSTANCE)
-    result = subprocess.run([BASH, str(SCRIPT), *args], input=token, capture_output=True, text=True, env=full_env,
+        args = ("--env", "dev", "--instance-id", INSTANCE, "--stdin")
+    command = [*(shell or [BASH]), str(SCRIPT), *args]
+    result = subprocess.run(command, input=token, capture_output=True, text=True, env=full_env,
                             timeout=60)
     return result, work
 
@@ -127,7 +129,7 @@ def test_a_new_secret_is_created_readable_by_that_environments_runtime_account_t
 
 
 def test_prod_uses_its_own_secret_and_runtime_account(tmp_path):
-    _, work = stored(tmp_path, "--env", "prod", "--instance-id", INSTANCE)
+    _, work = stored(tmp_path, "--env", "prod", "--instance-id", INSTANCE, "--stdin")
     text = "\n".join(" ".join(call) for call in calls(work))
     assert "cohortlens-prod-otlp-headers" in text and "cohortlens-run-prod@" in text
     assert "-dev-" not in text and "run-dev" not in text
@@ -163,7 +165,7 @@ def test_an_empty_short_or_whitespace_token_is_refused_before_any_command_runs(t
 @pytest.mark.parametrize("args", [
     [], ["--env", "dev"], ["--instance-id", INSTANCE], ["--env", "staging", "--instance-id", INSTANCE],
     ["--env", "dev", "--instance-id", "abc"], ["--env", "dev", "--instance-id", "1; echo hi"],
-    ["--env", "dev", "--instance-id", INSTANCE, "--token", "x" * 30],
+    ["--env", "dev", "--instance-id", INSTANCE, "--stdin", "--token", "x" * 30],
     ["--env", "dev", "--instance-id", INSTANCE, "extra"],
     ["--env"], ["--instance-id"],
 ])
@@ -174,7 +176,7 @@ def test_bad_arguments_are_refused_before_any_command_runs(tmp_path, args):
 
 def test_the_token_cannot_be_given_as_an_argument(tmp_path):
     """It is read from the prompt only, so it cannot end up in the shell history or the process list."""
-    result, _ = run_store(tmp_path, "--env", "dev", "--instance-id", INSTANCE, "--token", TOKEN)
+    result, _ = run_store(tmp_path, "--env", "dev", "--instance-id", INSTANCE, "--stdin", "--token", TOKEN)
     assert result.returncode != 0 and TOKEN not in result.stdout + result.stderr
 
 
@@ -187,3 +189,39 @@ def test_a_bad_project_is_refused_before_any_command_runs(tmp_path, env):
 def test_the_script_asks_for_hidden_input_when_run_in_a_terminal():
     text = SCRIPT.read_text(encoding="utf-8")
     assert "read -rs" in text and "[ -t 0 ]" in text
+
+
+# ---- review findings of #70 ---------------------------------------------------------------------------------
+
+def test_a_token_piped_in_is_refused_unless_stdin_is_asked_for_explicitly(tmp_path):
+    """`echo <token> | script` puts the token in the shell history; the hidden prompt is the way, so piping is opt-in."""
+    result, work = run_store(tmp_path, "--env", "dev", "--instance-id", INSTANCE)
+    assert result.returncode != 0 and calls(work) == []
+    assert "terminal" in result.stderr.lower() and "--stdin" in result.stderr
+    assert TOKEN not in result.stdout + result.stderr
+
+
+def test_the_stdin_option_is_documented_as_for_automation_only():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "--stdin" in text and "automation" in text.lower()
+
+
+@pytest.mark.parametrize("how", ["flag", "shellopts"])
+def test_tracing_is_refused_because_it_would_print_the_token(tmp_path, how):
+    shell = [BASH, "-x"] if how == "flag" else None
+    env = {"SHELLOPTS": "xtrace"} if how == "shellopts" else None
+    result, work = run_store(tmp_path, shell=shell, env=env)
+    assert result.returncode != 0 and calls(work) == []
+    assert TOKEN not in result.stdout + result.stderr
+    assert "-x" in result.stderr or "trac" in result.stderr.lower()
+
+
+def test_nothing_inherited_from_the_callers_environment_reaches_gcloud_and_neither_does_the_token(tmp_path):
+    inherited = "inherited-" + secrets.token_hex(8)
+    result, work = run_store(tmp_path, env={"TOKEN": inherited, "encoded": inherited, "header": inherited})
+    assert result.returncode == 0, result.stderr
+    dumps = [path.read_text(encoding="utf-8", errors="replace") for path in work.glob("env_*")]
+    assert dumps
+    for text in dumps:
+        assert inherited not in text and TOKEN not in text
+        assert base64.b64encode(f"{INSTANCE}:{TOKEN}".encode()).decode() not in text
