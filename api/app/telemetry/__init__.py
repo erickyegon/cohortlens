@@ -120,7 +120,7 @@ _SECRET_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in (
     r"\bbasic\s+[a-z0-9+/=]{12,200}",                                                       # basic auth
     r"\beyJ[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{0,200}",                   # JWTs
     r"(?<![a-z0-9])[a-z0-9_\-]{0,40}" + _KEYWORDS + r"[\"']?\s{0,3}[:=]\s{0,3}"
-    r"(?:\"[^\"]{1,200}\"|'[^']{1,200}'|[^\s,;&\"'}]{1,200})",
+    r"(?:\"[^\"]{1,200}\"|'[^']{1,200}'|[\"']?[^\s,;&\"'}]{1,200})",
     r"\b(?:sk|pk|rk)-[a-z0-9_\-]{16,200}",                                                  # provider-style keys
     r"\b(?:glsa|glc|ghp|gho|ghs|github_pat|xox[abprs])_?[a-z0-9_\-]{16,200}",              # Grafana, GitHub, Slack
     r"[\w.%+\-]{1,64}@[\w.\-]{1,255}\.[a-z]{2,24}",                                         # email addresses
