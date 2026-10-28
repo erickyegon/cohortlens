@@ -108,7 +108,7 @@ def test_the_run_span_records_the_outcome_and_the_shape_not_the_content(client, 
     client.post(f"/cohorts/{cohort_id}/runs")
     run_span = by_name(wired.spans.get_finished_spans())["cohort.run"]
     assert dict(run_span.attributes) == {"cohortlens.outcome": "success", "cohortlens.rule_count": 3,
-                                         "cohortlens.step_count": 6}
+                                         "cohortlens.step_count": 6, "cohortlens.revision": telemetry.revision()}
 
 
 def test_a_log_line_for_the_run_carries_the_same_trace_id_as_the_spans(client, wired):
@@ -176,6 +176,60 @@ def test_every_response_carries_an_x_trace_id_that_is_a_real_trace_id(client, wi
         assert len(value) == 32 and int(value, 16) != 0
     root_ids = {trace_hex(span) for span in wired.spans.get_finished_spans() if span.name == "http.request"}
     assert len(root_ids) >= 5  # every request is its own trace
+
+
+def test_the_http_attributes_have_the_right_values_not_just_the_right_keys(client, wired):
+    """Review finding F3: the route is the TEMPLATE (never the URL), and the method and status are what happened."""
+    cohort_id = save(client)
+    wired.reset_captured()
+    client.post(f"/cohorts/{cohort_id}/runs")
+    client.get("/nowhere")
+    roots = [span for span in wired.spans.get_finished_spans() if span.name == "http.request"]
+    run_root = next(span for span in roots if span.attributes.get("http.route"))
+    assert dict(run_root.attributes) == {"http.request.method": "POST", "http.route": "/cohorts/{cohort_id}/runs",
+                                         "http.response.status_code": 201}
+    missing = next(span for span in roots if "http.route" not in span.attributes)
+    assert dict(missing.attributes) == {"http.request.method": "GET", "http.response.status_code": 404}
+    assert cohort_id not in " ".join(str(span.attributes) for span in roots)
+
+
+def test_a_client_chosen_http_method_cannot_become_a_span_attribute(client, wired):
+    """Review finding F1 (high): the method is client-controlled; only a closed set of methods is exported."""
+    wired.reset_captured()
+    client.request("FOO@BAR.COM", "/healthz")
+    root = next(span for span in wired.spans.get_finished_spans() if span.name == "http.request")
+    assert root.attributes["http.request.method"] == "_OTHER"
+    assert "FOO" not in root.to_json() and "BAR.COM" not in root.to_json()
+
+
+def test_a_run_is_counted_as_failed_even_when_recording_it_fails(client, wired, monkeypatch):
+    """Review finding F2: with the app database down, `_record` raises inside the error branch; the run must still be
+    counted and logged."""
+    cohort_id = save(client)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    def broken_record(*_args, **_kwargs):
+        raise RuntimeError("app database is down")
+
+    monkeypatch.setattr(runs, "execute_run", boom)
+    monkeypatch.setattr(runs, "_record", broken_record)
+    wired.reset_captured()
+    response = client.post(f"/cohorts/{cohort_id}/runs")
+    assert response.status_code == 500 and response.headers["X-Trace-Id"]
+    assert [p.attributes["outcome"] for p in wired.metric_points("cohortlens_cohort_runs_total")] == ["failed"]
+    assert [line for line in wired.lines() if "run finished outcome=failed" in line["message"]]
+    run_span = by_name(wired.spans.get_finished_spans())["cohort.run"]
+    assert run_span.attributes["cohortlens.outcome"] == "failed"
+
+
+def test_the_run_span_carries_the_revision(client, wired):
+    cohort_id = save(client)
+    wired.reset_captured()
+    client.post(f"/cohorts/{cohort_id}/runs")
+    run_span = by_name(wired.spans.get_finished_spans())["cohort.run"]
+    assert run_span.attributes["cohortlens.revision"] == telemetry.revision()
 
 
 def test_a_run_that_never_started_is_not_counted(client, wired):

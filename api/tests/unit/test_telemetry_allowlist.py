@@ -116,3 +116,38 @@ def test_force_flush_and_shutdown_reach_the_exporter(exported):
     with tracer.start_as_current_span("cohort.run"):
         pass
     assert len(exporter.get_finished_spans()) == 1
+
+
+# ---- review finding F1 (high): a key on the list is not enough; each key accepts only its own shape of value -----
+
+@pytest.mark.parametrize("key, value", [
+    ("http.request.method", "FOO@BAR.COM"), ("http.request.method", "get"), ("http.request.method", "X" * 10),
+    ("http.route", "http://example.com/x"), ("http.route", "/cohorts?token=abc"), ("http.route", "/a b"),
+    ("http.route", "a@b.com"), ("http.route", "/" + "x" * 80),
+    ("http.response.status_code", "201"), ("http.response.status_code", 99), ("http.response.status_code", 700),
+    ("http.response.status_code", True),
+    ("cohortlens.outcome", "a cohort named Alice"), ("cohortlens.outcome", 3),
+    ("cohortlens.rule_count", "3"), ("cohortlens.rule_count", -1), ("cohortlens.rule_count", 1000),
+    ("cohortlens.step_count", 2.5), ("cohortlens.step_count", True),
+    ("cohortlens.revision", "a@b.com"), ("cohortlens.revision", "not a sha"), ("cohortlens.revision", "A5B89D7"),
+])
+def test_a_value_that_does_not_fit_its_keys_rule_is_dropped(exported, key, value):
+    tracer, exporter = exported
+    with tracer.start_as_current_span("cohort.run") as span:
+        span.set_attribute(key, value)
+    assert dict(only_span(exporter).attributes) == {}
+
+
+@pytest.mark.parametrize("key, value", [
+    ("http.request.method", "GET"), ("http.request.method", "POST"), ("http.request.method", "_OTHER"),
+    ("http.route", "/cohorts/{cohort_id}/runs"), ("http.route", "/healthz"),
+    ("http.response.status_code", 200), ("http.response.status_code", 504),
+    ("cohortlens.outcome", "success"), ("cohortlens.outcome", "failed"), ("cohortlens.outcome", "timeout"),
+    ("cohortlens.rule_count", 0), ("cohortlens.rule_count", 10), ("cohortlens.step_count", 13),
+    ("cohortlens.revision", "dev"), ("cohortlens.revision", "a5b89d770e0b9b10b9cd1fbc3ca251755b14aba1"),
+])
+def test_a_value_that_fits_its_keys_rule_is_kept(exported, key, value):
+    tracer, exporter = exported
+    with tracer.start_as_current_span("cohort.run") as span:
+        span.set_attribute(key, value)
+    assert dict(only_span(exporter).attributes) == {key: value}

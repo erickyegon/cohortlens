@@ -135,3 +135,26 @@ def test_nothing_is_exported_without_a_configured_endpoint(monkeypatch):
     handles = telemetry.configure_from_environment()
     assert handles.exporting is False
     telemetry.shutdown()
+
+
+# ---- review findings F6 and F7 ---------------------------------------------------------------------------------------
+
+def test_extra_fields_on_a_log_record_are_never_exported_over_otlp(wired):
+    _, _, logs, _ = wired
+    extras = {"person": "P1", "email": "a@b.com", "birth": "1960-05-05"}
+    logging.getLogger("cohortlens.api").info("with extras", extra=extras)
+    attributes = dict(logs.get_finished_logs()[0].log_record.attributes or {})
+    assert not {"person", "email", "birth"} & set(attributes)
+    assert "P1" not in str(attributes) and "a@b.com" not in str(attributes)
+
+
+def test_an_exception_shows_its_class_exactly_once_in_both_the_json_line_and_the_exported_record(wired):
+    _, _, logs, stream = wired
+    try:
+        raise KeyError("secret key name")
+    except KeyError:
+        logging.getLogger("cohortlens.api").exception("lookup failed")
+    (line,) = log_lines(stream)
+    assert line["exception"] == "KeyError" and line["message"].count("exception=") == 0
+    body = str(logs.get_finished_logs()[0].log_record.body)
+    assert body.count("exception=KeyError") == 1 and "secret key name" not in body

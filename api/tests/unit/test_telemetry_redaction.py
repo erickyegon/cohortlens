@@ -24,6 +24,11 @@ KEY_BODY = "A1b2C3d4E5f6G7h8I9j0"
     "postgres://user:pw@10.0.0.5/db",
     "mysql://user:pw@host/db", "https://user:pw@example.com/path",
     "someone@example.com", "first.last+tag@sub.example.co.uk",
+    '{"api_key": "' + KEY_BODY + '"}', "{'password': '" + KEY_BODY + "'}", "PGPASSWORD=" + KEY_BODY,
+    "Authorization: Basic " + "dXNlcjpwYXNzd29yZA==" + "Zm9v", "bearer abc$def" + KEY_BODY,
+    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJl", "m\u00fcller@b\u00fccher.example.de",
+    "postgres" + "ql://user:p/ss" + KEY_BODY + "@host.example.com/db",
+    "SOMEONE@EXAMPLE.COM",
 ])
 def test_secret_like_text_is_masked(secret_text):
     masked = redact(f"before {secret_text} after")
@@ -37,6 +42,7 @@ def test_secret_like_text_is_masked(secret_text):
     "revision a5b89d770e0b9b10b9cd1fbc3ca251755b14aba1",
     "cohortlens-api-dev-00004-req", "persons 5724 final 481", "GET /cohorts/6f1c1f0e-5b1c-4d55-9a0e-0a5f4c2b9a11/runs",
     "request failed exception=OperationalError", "an @ sign alone and a_token word", "https://cohortlens.run.app/version",
+    "the bearer of bad news", "bearer of", "tokens are counted per run", "password reset is out of scope",
 ])
 def test_ordinary_log_text_is_left_alone(harmless):
     assert redact(harmless) == harmless
@@ -75,3 +81,18 @@ def test_a_redacted_message_reaches_the_json_line():
         logger.removeHandler(handler)
     line = json.loads(stream.getvalue())
     assert "a@b.com" not in line["message"] and KEY_BODY not in line["message"] and MASK in line["message"]
+
+
+def test_redaction_cost_is_bounded_on_hostile_input():
+    """Review finding F5: the email and URL patterns were quadratic; a long log message must not stall a request."""
+    import time
+
+    for hostile in ("a" * 100_000, "a@" * 50_000, "x:" * 50_000 + "@", "bearer " + "a" * 100_000, "a.b" * 40_000 + "@"):
+        started = time.perf_counter()
+        redact(hostile)
+        assert time.perf_counter() - started < 1.0, hostile[:12]
+
+
+def test_an_over_long_message_is_truncated_and_marked_rather_than_scanned_in_full():
+    masked = redact("x" * 50_000)
+    assert len(masked) < 20_000 and masked.endswith("[TRUNCATED]")

@@ -10,6 +10,7 @@ data point and the resource) and searched.
 import copy
 import io
 import json
+import logging
 import pathlib
 import re
 
@@ -90,6 +91,12 @@ def test_nothing_from_the_truth_fixture_or_the_hostile_input_leaves_in_any_span_
     assert client.post(f"/cohorts/{cohort_id}/runs").status_code == 504
     monkeypatch.undo()
 
+    # hostile text sent straight through the logger (this is what actually exercises the redaction), with extras too
+    api_log = logging.getLogger("cohortlens.api")
+    api_log.error("failed for %s using %s %s", HOSTILE_EMAIL, HOSTILE_CONNECTION, HOSTILE_TOKEN,
+                  extra={"person": "P1", "email": HOSTILE_EMAIL})
+    api_log.info("query was %s", HOSTILE_QUERY)
+
     # validation errors, a missing cohort, listing, reading, concept search with hostile text
     assert client.post("/cohorts", json={"name": HOSTILE_EMAIL, "index_event": {"domain": "nope"}}).status_code == 422
     assert client.get("/cohorts/6f1c1f0e-5b1c-4d55-9a0e-0a5f4c2b9a11").status_code == 404
@@ -107,6 +114,8 @@ def test_nothing_from_the_truth_fixture_or_the_hostile_input_leaves_in_any_span_
 
     # the truth fixture: no person id key, no source value, no birth date in any form
     assert "person_id" not in blob and "person_source_value" not in blob
+    assert not re.search(r"person[_ ]?id", blob, re.IGNORECASE)
+    assert blob.count("[REDACTED]") >= 3  # the hostile log lines really were masked, not just absent
     for _person_id, source, birth, year, month, day in fixture_identifiers(api_database_url):
         assert not re.search(rf"(?<![A-Za-z0-9]){re.escape(source)}(?![A-Za-z0-9])", blob), source
         assert birth.strftime("%Y-%m-%d") not in blob and birth.strftime("%Y-%m-%d %H:%M:%S") not in blob
