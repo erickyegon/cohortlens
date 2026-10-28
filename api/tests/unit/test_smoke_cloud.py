@@ -25,8 +25,7 @@ BASE = "https://candidate---cohortlens-api-dev-abc123-ul.a.run.app"
 FAKE_CURL = r"""#!/usr/bin/env bash
 # a fake curl: finds the method and URL, answers from $FAKE_CURL_DIR/<METHOD>_<path with / as _> (first line =
 # status code, the rest = body), and prints the body then the status code on its own last line, as curl does for
-# -w '
-%{http_code}'
+# the dash-w option with a newline and the status code
 printf '%s\x1f' "$@" >> "$FAKE_LOG"; printf '\n' >> "$FAKE_LOG"
 method=GET; url=""; previous=""
 for argument in "$@"; do
@@ -169,3 +168,13 @@ def test_the_script_sends_no_credentials_and_uses_timeouts(tmp_path):
     text = " ".join(" ".join(c) for c in calls).lower()
     assert "authorization" not in text and "password" not in text
     assert all("--max-time" in call for call in calls)
+
+
+def test_a_flag_without_its_value_is_refused_instead_of_looping_forever(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    _install(bin_dir, "curl", FAKE_CURL)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run([BASH, str(SCRIPT), BASE, "--api-prefix"], capture_output=True, text=True, env=env,
+                            timeout=15)
+    assert result.returncode == 2 and "api-prefix" in result.stderr

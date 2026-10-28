@@ -12,7 +12,9 @@ set -euo pipefail
 BASE="" PREFIX=""
 while (( $# )); do
   case "$1" in
-    --api-prefix) PREFIX="${2-}"; shift 2 || true ;;
+    --api-prefix)
+      (( $# >= 2 )) || { echo "error: --api-prefix needs a value" >&2; exit 2; }
+      PREFIX="$2"; shift 2 ;;
     -h | --help) sed -n '2,9p' "$0"; exit 0 ;;
     -*) echo "unknown argument: '$1'" >&2; exit 2 ;;
     *) [ -z "$BASE" ] || { echo "unexpected argument: '$1'" >&2; exit 2; }; BASE="$1"; shift ;;

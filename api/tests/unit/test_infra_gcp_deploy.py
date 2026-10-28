@@ -256,3 +256,9 @@ def test_bad_arguments_are_refused_before_any_command_runs(tmp_path, args):
 def test_bad_settings_are_refused_before_any_command_runs(tmp_path, env):
     result, calls, _ = run_deploy(tmp_path, env=env)
     assert result.returncode != 0 and calls == []
+
+
+@pytest.mark.parametrize("flag_name", ["--env", "--version", "--api-image", "--web-image"])
+def test_a_flag_without_its_value_is_refused_instead_of_looping_forever(tmp_path, flag_name):
+    result = subprocess.run([BASH, str(SCRIPT), flag_name], capture_output=True, text=True, timeout=15)
+    assert result.returncode == 2 and flag_name in result.stderr

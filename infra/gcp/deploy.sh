@@ -21,10 +21,15 @@ export LC_ALL=C
 ENVIRONMENT="" VERSION="" API_IMAGE="" WEB_IMAGE=""
 while (( $# )); do
   case "$1" in
-    --env) ENVIRONMENT="${2-}"; shift 2 || true ;;
-    --version) VERSION="${2-}"; shift 2 || true ;;
-    --api-image) API_IMAGE="${2-}"; shift 2 || true ;;
-    --web-image) WEB_IMAGE="${2-}"; shift 2 || true ;;
+    --env | --version | --api-image | --web-image)
+      (( $# >= 2 )) || { echo "error: $1 needs a value" >&2; exit 2; }
+      case "$1" in
+        --env) ENVIRONMENT="$2" ;;
+        --version) VERSION="$2" ;;
+        --api-image) API_IMAGE="$2" ;;
+        --web-image) WEB_IMAGE="$2" ;;
+      esac
+      shift 2 ;;
     -h | --help) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1'" >&2; exit 2 ;;
   esac
