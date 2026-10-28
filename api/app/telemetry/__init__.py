@@ -42,7 +42,7 @@ MAX_ATTRIBUTE_VALUE_LENGTH = 64
 DURATION_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0)
 
 HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "_OTHER"})
-_ROUTE = re.compile(r"^/[A-Za-z0-9_{}\-/]*$")
+_ROUTE = re.compile(r"^/[A-Za-z0-9_{}.\-/]*$")
 _REVISION = re.compile(r"^(?:dev|[0-9a-f]{7,40})$")
 
 
@@ -119,7 +119,8 @@ _SECRET_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in (
     r"\bbearer\s+[^\s,;\"']{8,200}",                                                       # bearer tokens
     r"\bbasic\s+[a-z0-9+/=]{12,200}",                                                       # basic auth
     r"\beyJ[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{0,200}",                   # JWTs
-    r"(?<![a-z0-9])[a-z0-9_\-]{0,40}" + _KEYWORDS + r"[\"']?\s{0,3}[:=]\s{0,3}[\"']?[^\s,;&\"'}]{1,200}",
+    r"(?<![a-z0-9])[a-z0-9_\-]{0,40}" + _KEYWORDS + r"[\"']?\s{0,3}[:=]\s{0,3}"
+    r"(?:\"[^\"]{1,200}\"|'[^']{1,200}'|[^\s,;&\"'}]{1,200})",
     r"\b(?:sk|pk|rk)-[a-z0-9_\-]{16,200}",                                                  # provider-style keys
     r"\b(?:glsa|glc|ghp|gho|ghs|github_pat|xox[abprs])_?[a-z0-9_\-]{16,200}",              # Grafana, GitHub, Slack
     r"[\w.%+\-]{1,64}@[\w.\-]{1,255}\.[a-z]{2,24}",                                         # email addresses
