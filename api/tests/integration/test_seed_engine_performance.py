@@ -48,7 +48,10 @@ def broad_cohort(rule_count, min_occurrences):
 
 
 def timed_counts(engine, defn, runs=4):
-    """Counts and the best of `runs` wall-clock times (the first run warms the cache; a noisy CI neighbour must slow every run to fail)."""
+    """Counts and the best of `runs` wall-clock times.
+
+    The first run warms the cache; a noisy CI neighbour must slow every run to fail.
+    """
     best, counts = None, None
     for _ in range(runs):
         with engine.connect() as conn:
