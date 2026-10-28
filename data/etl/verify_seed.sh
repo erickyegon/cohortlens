@@ -11,12 +11,14 @@ trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 # The postgres image starts a temporary server (unix socket only) to run its init, stops it, then starts the real
 # one. pg_isready over the socket passes during the temporary phase, and loading then races the shutdown. The real
 # server is up only once "ready to accept connections" has been logged a second time AND a TCP query works.
-for _ in $(seq 1 120); do
+ok=0
+SECONDS=0
+while (( SECONDS < 120 )); do
   ready=$(docker logs "$NAME" 2>&1 | grep -c "database system is ready to accept connections" || true)
-  if [ "$ready" -ge 2 ] && docker exec "$NAME" psql -h 127.0.0.1 -U postgres -d cohortlens -tAc "select 1" >/dev/null 2>&1; then break; fi
+  if [ "$ready" -ge 2 ] && docker exec "$NAME" psql -h 127.0.0.1 -U postgres -d cohortlens -tAc "select 1" >/dev/null 2>&1; then ok=1; break; fi
   sleep 1
 done
-[ "${ready:-0}" -ge 2 ] || { echo "postgres did not become ready in 120 s" >&2; docker logs "$NAME" 2>&1 | tail -20 >&2; exit 1; }
+[ "$ok" = 1 ] || { echo "postgres did not become ready in 120 s" >&2; docker logs "$NAME" 2>&1 | tail -20 >&2; exit 1; }
 echo "loading seed..."
 gunzip -c data/seed/omop_subset.sql.gz | docker exec -i "$NAME" psql -q -v ON_ERROR_STOP=1 -U postgres -d cohortlens >/dev/null
 docker exec "$NAME" psql -U postgres -d cohortlens -c "select pg_size_pretty(pg_database_size('cohortlens')) as db_size"
