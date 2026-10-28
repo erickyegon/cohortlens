@@ -36,6 +36,25 @@ After `--apply` the script prints the values to set as GitHub repository **varia
 
 The script is tested against a fake `gcloud` and a fake `gh` (`api/tests/unit/test_infra_gcp_setup.py`, 75 tests): plan mode runs no command, exact argument lists and the exact set of 12 IAM grants, the exact trust condition and mapping, the environment check, existing-resource verification, input validation, no deletions, idempotence. The tests were mutation-tested: weakening the script 23 different ways (widening the condition, swapping the dev/prod bindings, granting `allUsers`, scoping a grant wrongly, dropping a check or a flag, storing a secret value) is caught every time. Its `gcloud` flags were checked against the real CLI's help. **It has not been run against a real project yet.** The first `--apply` is the real test.
 
+## Dev deploy (`.github/workflows/deploy-dev.yml`, `infra/gcp/deploy.sh`)
+
+Every merge to `main` deploys to dev. The workflow authenticates with workload identity federation (no keys), builds the `api` and `web` images, pushes them tagged with the git sha, and calls `infra/gcp/deploy.sh`, which holds the logic and is tested against a fake `gcloud`. The order is the safety property:
+
+1. **Migrate first.** `alembic upgrade head` runs as the Cloud Run job `cohortlens-migrate-dev` (runtime account, app-database secret by reference) and must finish before any new revision exists. Migrations are expand-then-contract, so the revision that is still serving keeps working.
+2. **Candidate, not traffic.** Each service (`cohortlens-api-dev`, then `cohortlens-web-dev`) is deployed as a revision with `--no-traffic --tag candidate`.
+3. **Smoke test the candidate** on its tagged URL (`scripts/smoke_cloud.sh`): `/healthz`, `/readyz` (the database answers and has persons), then the reference cohort is created, run (final count **481**) and deleted. The web candidate is tested through its nginx proxy (`/api/...`).
+4. **Move traffic** (`update-traffic --to-latest`, tag removed). A failed migration or smoke test leaves traffic where it was and fails the workflow.
+
+Images are deployed **by digest**, never by tag. The first deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live and is smoke tested afterwards.
+
+The web container renders its nginx config at start from `API_UPSTREAM` and `API_HOST` (Compose: `http://api:8000`; Cloud Run: the API service URL), resolving the upstream per request.
+
+**The API service is public** (`--allow-unauthenticated`), like the web service: the data is synthetic and the browser reaches the API through the web proxy, so there is no sign-in to protect. This is a demo decision; revisit it before any real data.
+
+**Before the first run** (in this order): the `production` environment (done), `bash infra/gcp/setup.sh` plan reviewed and then `--apply`, the repository variables it prints set in GitHub (**Settings → Secrets and variables → Actions → Variables**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SA_DEV`, `GCP_RUNTIME_SA_DEV`, `GCP_ARTIFACT_REGISTRY`), and the Neon `dev` branch loaded with the roles, schema grants and seed and the two dev secrets filled (`make seed-cloud`, not built yet). Until `GCP_PROJECT_ID` is set the workflow is skipped.
+
+**Not verified against a real project.** Nothing here has run against Google Cloud or Neon; the tests use fakes. The Cloud Run behaviours it relies on (tagged candidate URLs of the form `https://candidate---<service host>`, `--no-traffic` on an existing service, `update-traffic --to-latest`) are documented Cloud Run behaviour but unconfirmed in this project until the first run.
+
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.
 
