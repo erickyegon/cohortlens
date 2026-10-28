@@ -44,6 +44,7 @@ jobs:
       REGION: ${{ vars.GCP_REGION }}
       REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
       RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA_PROD }}
+      OTLP_ENDPOINT: ${{ vars.GCP_OTLP_ENDPOINT }}  # optional: Grafana Cloud OTLP endpoint (docs/observability.md)
       # untrusted text goes through the environment and is validated by promote.sh, never into the shell inline
       EXPECTED_VERSION: ${{ github.event.workflow_run.head_sha || inputs.version }}
     steps:

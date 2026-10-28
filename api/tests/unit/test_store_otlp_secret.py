@@ -71,6 +71,11 @@ def calls(work):
     return found
 
 
+def steps_of(work):
+    """Each gcloud call as 'group verb [subverb] secret-name' (`versions add` has one more word than the others)."""
+    return [" ".join(call[:4] if call[1] == "versions" else call[:3]) for call in calls(work)]
+
+
 def stored_header(work):
     stdins = sorted(work.glob("stdin_*"), key=lambda item: int(item.name.rsplit("_", 1)[1]))
     assert len(stdins) == 1
@@ -110,7 +115,7 @@ def test_the_token_never_appears_on_a_command_line_or_in_any_output(tmp_path):
 
 def test_a_new_secret_is_created_readable_by_that_environments_runtime_account_then_a_version_is_added(tmp_path):
     _, work = stored(tmp_path)
-    steps = [" ".join(call[:3]) for call in calls(work)]
+    steps = steps_of(work)
     assert steps == ["secrets describe cohortlens-dev-otlp-headers", "secrets create cohortlens-dev-otlp-headers",
                      "secrets add-iam-policy-binding cohortlens-dev-otlp-headers",
                      "secrets versions add cohortlens-dev-otlp-headers"]
@@ -130,7 +135,7 @@ def test_prod_uses_its_own_secret_and_runtime_account(tmp_path):
 
 def test_running_again_adds_a_new_version_without_recreating_the_secret(tmp_path):
     _, work = stored(tmp_path, env={"FAKE_SECRET_EXISTS": "1"})
-    steps = [" ".join(call[:3]) for call in calls(work)]
+    steps = steps_of(work)
     assert "secrets create cohortlens-dev-otlp-headers" not in steps
     assert steps[-1] == "secrets versions add cohortlens-dev-otlp-headers"
 
@@ -148,7 +153,7 @@ def test_a_failing_step_fails_the_script_and_still_never_prints_the_token(tmp_pa
     assert result.returncode != 0 and TOKEN not in result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("token", ["", "\n", "short", "has a space in it " + "x" * 30, "tab\tin\tit" + "x" * 30])
+@pytest.mark.parametrize("token", ["", "\n", "abc123", "has a space in it " + "x" * 30, "tab\tin\tit" + "x" * 30])
 def test_an_empty_short_or_whitespace_token_is_refused_before_any_command_runs(tmp_path, token):
     result, work = run_store(tmp_path, token=token + "\n" if not token.endswith("\n") else token)
     assert result.returncode != 0 and calls(work) == []

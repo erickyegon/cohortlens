@@ -16,6 +16,24 @@ One request is one trace. The root span `http.request` gives the `X-Trace-Id` (t
 
 **Export.** Only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (OTLP over HTTP; the standard `OTEL_EXPORTER_OTLP_HEADERS` carries credentials). Compose sets it to the local `lgtm` container; with no endpoint nothing is exported, but trace ids still exist. The same code exports to Grafana Cloud by changing those two variables.
 
+## Exporting to Grafana Cloud (issue #22)
+
+The same code exports to Grafana Cloud when two things are set: the endpoint (not secret) and the credential (secret). Nothing in the image changes, so dev and prod run the same digest and differ only in this configuration.
+
+**One-time setup, by the owner:**
+1. **Create the token** in the Grafana Cloud portal: open your stack, then the **OpenTelemetry (OTLP)** connection page (it shows the OTLP endpoint and the instance ID), click **Generate now**, name it `cohortlens-otlp`, and create it. Copy the token: it is shown **once**. Do not paste it anywhere except the hidden prompt below.
+2. **Store it in Secret Manager without it appearing anywhere.** In Git Bash, in the repository folder:
+   `bash scripts/store_otlp_secret.sh --env dev --instance-id <instance id>`
+   The script asks for the token with hidden input (nothing is echoed, so nothing reaches the screen, the chat or the shell history), builds the header the exporter reads (`Authorization=Basic%20<base64 of instance:token>`, URL-encoded as the OpenTelemetry specification requires), creates the secret `cohortlens-dev-otlp-headers` if needed, lets `cohortlens-run-dev` read it, and stores a new version. Run it again with `--env prod` for `cohortlens-prod-otlp-headers`. It prints neither the token nor the header. Running it again rotates the token.
+3. **Set the endpoint** as a repository variable (it is a URL, not a secret): `gh variable set GCP_OTLP_ENDPOINT --body https://<stack>.grafana.net/otlp` (for this stack: `https://otlp-gateway-prod-us-east-2.grafana.net/otlp`). Dev deploys and prod promotions pass it to `infra/gcp/deploy.sh`, which gives it, and the secret, to the **api** service only (the web service and the migration job export nothing). Unset, nothing is exported.
+4. **Deploy:** the next dev deploy picks it up (or run **Actions → Deploy dev → Run workflow**); for prod, approve the next promotion.
+
+`DEPLOYMENT_ENVIRONMENT` (`dev` or `prod`) and `SERVICE_VERSION` (the git sha) label every signal, so dev and prod are told apart in one stack.
+
+**To check it works** (Grafana Cloud, **Explore**): Prometheus `cohortlens_cohort_runs_total`; Tempo, search for `service.name = cohortlens-api`; Loki `{service_name="cohortlens-api"}`. Run a cohort in the UI, then paste the `Reference:` trace id of a failed run, or any `X-Trace-Id`, into Tempo's trace id search, and open the logs from the trace.
+
+**Known risk, Cloud Run:** CPU is throttled between requests, so batched export from an idle instance may be delayed or dropped. The exporters flush every 2 s (spans) and 15 s (metrics). If signals arrive late or not at all, the fix is to run the api with CPU always allocated (`--no-cpu-throttling`), at a small cost; check Cloud Logging for `Failed to export` warnings from the api first.
+
 ## What never leaves the process (issue #21, NFR-3)
 
 - **Allowlist span processor** (`app/telemetry`): a span reaches an exporter with only the attributes `http.request.method`, `http.route` (the route *template*, never the URL), `http.response.status_code`, `cohortlens.outcome`, `cohortlens.rule_count`, `cohortlens.step_count` and `cohortlens.revision`, **and each key only with a value of its own shape**: the method must be one of a closed set (anything else is exported as `_OTHER`, because the method is client-controlled), the route must look like a template, the status an integer 100 to 599, the outcome one of the three outcomes, the counts small integers, the revision `dev` or a git sha. Being on the list is not enough. Every event (where an exception message would be), every link and every status description is dropped. Spans are made by hand; there is no auto-instrumentation, which would add URLs and database statements.
