@@ -28,6 +28,7 @@ KEY_BODY = "A1b2C3d4E5f6G7h8I9j0"
     "Authorization: Basic " + "dXNlcjpwYXNzd29yZA==" + "Zm9v", "bearer abc$def" + KEY_BODY,
     ".".join(["ey" + "JhbGciOiJIUzI1NiJ9", "ey" + "JzdWIiOiIxMjM0NTYifQ", "c2lnbmF0dXJl"]),
     "api_key = \"two words " + KEY_BODY + "\"", "password: 'pa ss " + KEY_BODY + "'",
+    'password="' + KEY_BODY + " unterminated words", "token = '" + KEY_BODY,
     "m\u00fcller@b\u00fccher.example.de",
     "postgres" + "ql://user:p/ss" + KEY_BODY + "@host.example.com/db",
     "SOMEONE@EXAMPLE.COM",
