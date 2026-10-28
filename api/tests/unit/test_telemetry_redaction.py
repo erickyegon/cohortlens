@@ -26,14 +26,17 @@ KEY_BODY = "A1b2C3d4E5f6G7h8I9j0"
     "someone@example.com", "first.last+tag@sub.example.co.uk",
     '{"api_key": "' + KEY_BODY + '"}', "{'password': '" + KEY_BODY + "'}", "PGPASSWORD=" + KEY_BODY,
     "Authorization: Basic " + "dXNlcjpwYXNzd29yZA==" + "Zm9v", "bearer abc$def" + KEY_BODY,
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJl", "m\u00fcller@b\u00fccher.example.de",
+    ".".join(["ey" + "JhbGciOiJIUzI1NiJ9", "ey" + "JzdWIiOiIxMjM0NTYifQ", "c2lnbmF0dXJl"]),
+    "api_key = \"two words " + KEY_BODY + "\"", "password: 'pa ss " + KEY_BODY + "'",
+    "m\u00fcller@b\u00fccher.example.de",
     "postgres" + "ql://user:p/ss" + KEY_BODY + "@host.example.com/db",
     "SOMEONE@EXAMPLE.COM",
 ])
 def test_secret_like_text_is_masked(secret_text):
     masked = redact(f"before {secret_text} after")
     assert MASK in masked and masked.startswith("before ") and masked.endswith(" after")
-    for fragment in (KEY_BODY, "user:pw", "someone@", "first.last", "@example.com", "@host", "@db."):
+    fragments = (KEY_BODY, "user:pw", "someone@", "first.last", "@example.com", "@host", "@db.", "two words", "pa ss")
+    for fragment in fragments:
         assert fragment not in masked, (fragment, masked)
 
 

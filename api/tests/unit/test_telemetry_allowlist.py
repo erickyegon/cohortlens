@@ -140,7 +140,7 @@ def test_a_value_that_does_not_fit_its_keys_rule_is_dropped(exported, key, value
 
 @pytest.mark.parametrize("key, value", [
     ("http.request.method", "GET"), ("http.request.method", "POST"), ("http.request.method", "_OTHER"),
-    ("http.route", "/cohorts/{cohort_id}/runs"), ("http.route", "/healthz"),
+    ("http.route", "/cohorts/{cohort_id}/runs"), ("http.route", "/healthz"), ("http.route", "/openapi.json"),
     ("http.response.status_code", 200), ("http.response.status_code", 504),
     ("cohortlens.outcome", "success"), ("cohortlens.outcome", "failed"), ("cohortlens.outcome", "timeout"),
     ("cohortlens.rule_count", 0), ("cohortlens.rule_count", 10), ("cohortlens.step_count", 13),
