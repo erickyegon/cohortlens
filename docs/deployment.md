@@ -67,7 +67,7 @@ Run once per environment, by hand, before the first deploy. It prepares the Neon
 1. In the Neon console open project `cohortlens` → **Branches** → `dev` → **Connect**. Choose database `neondb`, role `neondb_owner`, and **untick "Connection pooling"** (the script needs the direct connection and refuses a pooled one). Copy the connection string. The host in it starts with the branch's endpoint id, `ep-...`.
 2. In Git Bash, set it for this terminal only (it is never written to a file or printed) and run the script, passing the endpoint id from the host name as the confirmation:
    `export NEON_DEV_URL='postgresql://neondb_owner:...@ep-xxxx....neon.tech/neondb?sslmode=require'`
-   `make seed-cloud ARGS="--confirm-endpoint ep-xxxx"`
+   `bash scripts/seed_cloud.sh --env dev --confirm-endpoint ep-xxxx` (or `make seed-cloud ARGS="--confirm-endpoint ep-xxxx"` where `make` is installed)
 3. Close the terminal or `unset NEON_DEV_URL` afterwards.
 
 Use the connection string exactly as Neon gives it (the host must end in `.neon.tech`; a password with special characters stays percent-encoded and is passed on as is). **Never run the script with `bash -x`**: that would print the passwords.
@@ -81,6 +81,23 @@ Use the connection string exactly as Neon gives it (the host must end in `.neon.
 The confirmation exists so that a production connection string pasted by mistake is refused: the endpoint in the URL must be the one you typed. Needs `psql` or Docker (it falls back to the `postgres:18` image's `psql`). It is safe to run twice (existing roles keep their passwords, existing data is not reloaded); `--rotate-passwords` sets new passwords on the existing roles and stores new secret versions. It never drops, truncates or deletes anything. Prod is a separate, deliberate step, not supported by this script yet.
 
 The cloud role SQL differs from the local init script in one way: the Neon owner is not a superuser, so the `app` schema is created by the owner and `cohortlens_app` is granted `USAGE, CREATE` on it (instead of `CREATE SCHEMA ... AUTHORIZATION cohortlens_app`). Rehearsed against a throwaway Postgres 18 with a non-superuser owner: roles, grants, password enforcement, the Alembic migration as `cohortlens_app`, a second run and a rotation all behaved as described. Not run against Neon itself.
+
+## Prod promotion (`.github/workflows/promote-prod.yml`, `infra/gcp/promote.sh`)
+
+After a successful dev deploy (or by hand: **Actions → Promote to prod → Run workflow**, optionally with the full 40-character commit sha you expect dev to serve), the workflow **pauses** because its job runs in the `production` environment. Nothing happens until the required reviewer approves, and only a job of that environment can impersonate the prod deploy account.
+
+**To approve (browser):** GitHub → the repository → **Actions** → the **Promote to prod** run that says *Waiting* → **Review deployments** → tick **production** → optionally leave a comment → **Approve and deploy**. Choose **Reject** to stop it. The run page shows the commit the promotion was started for.
+
+After approval, `promote.sh` does this and nothing else:
+1. reads the images of the **revisions that serve the dev services right now** (the one revision holding all the traffic, deployed by digest, which passed the dev smoke test; never the newest template, which after a failed dev deploy is an untested candidate) and refuses unless both are digest-pinned images of this project's registry. It never looks anything up by tag, because a tag can be moved;
+2. asks the dev API which commit it runs (`/healthz`) and refuses if that is not the commit the approver was shown (dev moved on: start a new promotion);
+3. calls `deploy.sh --env prod` with **those same digests**: the migration job on the prod database first, then each service as a `--no-traffic` revision tagged `candidate`, a smoke test on its tagged URL, and only then the traffic move. A failed smoke test leaves traffic where it was and fails the run.
+
+The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. **If the web smoke test fails after the API went live**, prod runs the new API with the old web (the API is deployed and promoted first). Migrations are expand-then-contract, so the old web keeps working against the new API; fix forward or roll the API back (#19).
+
+Rollback by traffic shift is a separate workflow (#19).
+
+**Not possible yet:** the prod Neon branch has no roles, schema or seed and the two prod secrets have no value: `make seed-cloud` supports `dev` only. Until prod is prepared (a deliberate, separately approved step), a promotion will fail at the prod migration, before any revision exists. Nothing here has run against a real project.
 
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.

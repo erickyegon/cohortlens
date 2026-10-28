@@ -1,0 +1,67 @@
+name: Promote to prod
+
+# After a successful dev deploy (or by hand), this promotes what dev is serving to production. The job runs in the
+# `production` environment, so it PAUSES until the environment's required reviewer approves it in GitHub; only then does
+# it authenticate as the prod deploy account (which only jobs of that environment can impersonate, see setup.sh).
+# infra/gcp/promote.sh builds nothing: it reads the digest-pinned images dev is serving and infra/gcp/deploy.sh deploys
+# those same digests to prod as a no-traffic candidate, smoke tests its tagged URL, and only then moves traffic.
+#
+# Needs (once): the Google Cloud setup and the repository variables it prints (docs/deployment.md). Until
+# GCP_PROJECT_ID is set the job is skipped.
+
+on:
+  workflow_run:
+    workflows: ["Deploy dev"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Full 40-character commit sha you expect dev to be serving (leave empty to promote whatever dev serves now)"
+        required: false
+        type: string
+
+concurrency:
+  group: promote-prod
+  cancel-in-progress: false  # never cut a production deploy off half way; a newer waiting promotion replaces an older one
+
+permissions:
+  contents: read
+  id-token: write  # workload identity federation: no key files
+
+jobs:
+  promote:
+    name: promote to prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # only on main, only after a dev deploy that succeeded (or by hand), and not until the setup variables exist
+    if: >-
+      github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    environment: production
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
+      RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA_PROD }}
+      # untrusted text goes through the environment and is validated by promote.sh, never into the shell inline
+      EXPECTED_VERSION: ${{ github.event.workflow_run.head_sha || inputs.version }}
+    steps:
+      # the scripts come from the tip of main on purpose (the newest, reviewed version of the promotion logic); WHAT is
+      # promoted is decided by the digests dev serves and the commit the approver was shown, not by this checkout
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_PROD }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Promote what dev is serving (same digests), candidate first, then traffic
+        run: |
+          if [ -n "$EXPECTED_VERSION" ]; then
+            bash infra/gcp/promote.sh --expect-version "$EXPECTED_VERSION"
+          else
+            bash infra/gcp/promote.sh
+          fi

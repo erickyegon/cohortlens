@@ -21,6 +21,7 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash is required to run th
 
 PROJECT, REGION = "cohortlens", "us-east5"
 RUNTIME_SA = "cohortlens-run-dev@cohortlens.iam.gserviceaccount.com"
+PROD_RUNTIME_SA = "cohortlens-run-prod@cohortlens.iam.gserviceaccount.com"
 REGISTRY = "us-east5-docker.pkg.dev/cohortlens/cohortlens"
 API_IMAGE = f"{REGISTRY}/api@sha256:{'a' * 64}"
 WEB_IMAGE = f"{REGISTRY}/web@sha256:{'b' * 64}"
@@ -35,14 +36,15 @@ if [[ "$args" == *"run services describe"* ]]; then
   if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
   # a service that did not exist does exist once it has been deployed
   deployed=0
-  for svc in cohortlens-api-dev cohortlens-web-dev; do
+  for svc in cohortlens-api-dev cohortlens-web-dev cohortlens-api-prod cohortlens-web-prod; do
     if [[ "$args" == *"$svc"* ]] && grep -qa "run"$'\x1f'"deploy"$'\x1f'"$svc" "$FAKE_LOG"; then deployed=1; fi
   done
   if [ "${FAKE_EXISTS:-1}" != "1" ] && [ "$deployed" = "0" ]; then
     echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2; exit 1
   fi
-  if [[ "$args" == *"cohortlens-api-"* ]]; then echo "https://cohortlens-api-dev-abc123-ul.a.run.app"; fi
-  if [[ "$args" == *"cohortlens-web-"* ]]; then echo "https://cohortlens-web-dev-abc123-ul.a.run.app"; fi
+  for svc in cohortlens-api-dev cohortlens-web-dev cohortlens-api-prod cohortlens-web-prod; do
+    if [[ "$args" == *"run services describe $svc "* ]]; then echo "https://$svc-abc123-ul.a.run.app"; fi
+  done
   exit 0
 fi
 if [[ "$args" == *"run jobs execute"* ]] && [ "${FAKE_MIGRATE_FAIL:-0}" = "1" ]; then
@@ -238,7 +240,7 @@ def test_a_describe_that_fails_for_another_reason_is_not_treated_as_a_first_depl
 # ---- arguments and settings are validated before any command runs -----------------------------------------------
 
 @pytest.mark.parametrize("args", [
-    ["--env", "prod", "--version", SHA, "--api-image", API_IMAGE, "--web-image", WEB_IMAGE],      # prod is #18
+    ["--env", "staging", "--version", SHA, "--api-image", API_IMAGE, "--web-image", WEB_IMAGE],
     ["--env", "dev", "--version", "latest", "--api-image", API_IMAGE, "--web-image", WEB_IMAGE],
     ["--env", "dev", "--version", SHA, "--api-image", f"{REGISTRY}/api:latest", "--web-image", WEB_IMAGE],
     ["--env", "dev", "--version", SHA, "--api-image", API_IMAGE, "--web-image", f"{REGISTRY}/web:{SHA}"],
@@ -262,3 +264,57 @@ def test_bad_settings_are_refused_before_any_command_runs(tmp_path, env):
 def test_a_flag_without_its_value_is_refused_instead_of_looping_forever(tmp_path, flag_name):
     result = subprocess.run([BASH, str(SCRIPT), flag_name], capture_output=True, text=True, timeout=15)
     assert result.returncode == 2 and flag_name in result.stderr
+
+
+# ---- production (issue #18): the same script, the prod names, secrets and runtime account ----------------------------
+
+PROD_ARGS = ["--env", "prod", "--version", SHA, "--api-image", API_IMAGE, "--web-image", WEB_IMAGE]
+PROD_ENV = {"RUNTIME_SA": PROD_RUNTIME_SA}
+
+
+def test_prod_runs_the_same_order_with_prod_names(tmp_path):
+    calls, smokes = deployed(tmp_path, args=PROD_ARGS, env=PROD_ENV)
+    order = [index_of(calls, "run", "jobs", "deploy"), index_of(calls, "run", "jobs", "execute"),
+             index_of(calls, "run", "deploy", "cohortlens-api-prod"),
+             index_of(calls, "run", "services", "update-traffic", "cohortlens-api-prod"),
+             index_of(calls, "run", "deploy", "cohortlens-web-prod"),
+             index_of(calls, "run", "services", "update-traffic", "cohortlens-web-prod")]
+    assert order == sorted(order)
+    assert [s[0] for s in smokes] == ["https://candidate---cohortlens-api-prod-abc123-ul.a.run.app",
+                                      "https://candidate---cohortlens-web-prod-abc123-ul.a.run.app"]
+
+
+def test_prod_uses_the_prod_secrets_runtime_account_and_the_digests_it_was_given(tmp_path):
+    calls, _ = deployed(tmp_path, args=PROD_ARGS, env=PROD_ENV)
+    job = starting(calls, "run", "jobs", "deploy")[0]
+    assert job[3] == "cohortlens-migrate-prod" and flag(job, "image") == API_IMAGE
+    assert flag(job, "set-secrets") == "DATABASE_URL_APP=cohortlens-prod-database-url-app:latest"
+    api = starting(calls, "run", "deploy", "cohortlens-api-prod")[0]
+    web = starting(calls, "run", "deploy", "cohortlens-web-prod")[0]
+    assert flag(api, "image") == API_IMAGE and flag(web, "image") == WEB_IMAGE
+    assert flag(api, "service-account") == PROD_RUNTIME_SA and flag(web, "service-account") == PROD_RUNTIME_SA
+    assert flag(api, "set-secrets") == ("DATABASE_URL_APP=cohortlens-prod-database-url-app:latest,"
+                                        "DATABASE_URL_READER=cohortlens-prod-database-url-reader:latest")
+    assert flag(api, "set-env-vars") == f"SERVICE_VERSION={SHA},DEPLOYMENT_ENVIRONMENT=prod"
+    text = " ".join(" ".join(c) for c in calls)
+    assert "-dev" not in text  # nothing of dev is touched or referenced by a prod deploy
+
+
+def test_a_prod_candidate_is_tagged_with_no_traffic_and_a_failed_smoke_test_moves_nothing(tmp_path):
+    calls, _ = deployed(tmp_path, args=PROD_ARGS, env=PROD_ENV)
+    for name in ("cohortlens-api-prod", "cohortlens-web-prod"):
+        deploy = starting(calls, "run", "deploy", name)[0]
+        assert "--no-traffic" in deploy and flag(deploy, "tag") == "candidate"
+    failing = {**PROD_ENV, "FAKE_SMOKE_FAIL_ON": "cohortlens-api-prod"}
+    result, calls, _ = run_deploy(tmp_path, args=PROD_ARGS, env=failing)
+    assert result.returncode != 0 and starting(calls, "run", "services", "update-traffic") == []
+
+
+def test_prod_refuses_the_dev_runtime_account(tmp_path):
+    result, calls, _ = run_deploy(tmp_path, args=PROD_ARGS)  # RUNTIME_SA defaults to the dev account in this harness
+    assert result.returncode != 0 and calls == []
+
+
+def test_dev_refuses_the_prod_runtime_account(tmp_path):
+    result, calls, _ = run_deploy(tmp_path, env=PROD_ENV)  # --env dev with the prod account
+    assert result.returncode != 0 and calls == []
