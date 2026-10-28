@@ -14,6 +14,10 @@ Five agent roles do the work; one human owns product decisions, merges and produ
 ## Labels
 `ready` → `tests-written` → `needs-review` → `changes-requested` | `approved` → merged. `needs-human` marks an escalation. Two review rounds maximum before the human steps in.
 
+**Handoff labels, adopted from E4 onward.** The labels `tests-written`, `needs-review` and `resolved-by-agent` are used on every issue and PR of E4, E5 and E6 (2026-10-28, product owner decision). They were *not* used before this point: E1 to E3 and the Google Cloud setup script (#56, #57) were handed off without them, so the earlier history does not show them. `resolved-by-agent` marks work an agent has finished and handed back (for example a review finding fixed, or an incident resolved by the on-call agent), for the human to confirm.
+
+**Draft PRs.** Every PR is opened as a draft. It is marked "Ready for review" only after the Reviewer has posted its approval and all checks are green; the human merges any PR that is not a draft.
+
 ## Story flow
 1. Spec agent creates the issue, labels it `ready`.
 2. Test agent opens `feat/US-n-…`, commits failing tests, labels `tests-written`.

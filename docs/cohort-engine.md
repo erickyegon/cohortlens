@@ -72,6 +72,7 @@ Details:
 
 - **Exact counts never leave the engine.** `StepCount` is internal; the run endpoint (#12) and the baseline (#10) must pass everything through this module before serialising.
 - **Known limitation: differencing.** When two adjacent steps are both 11 or more, their exact difference (the number a rule removed) can be 1 to 10 and is visible by subtraction. Masking each count is the rule the spec asks for (NFR-4); hiding derived differences would need complementary suppression, which is out of scope here and is a documented limitation for a synthetic-data demo.
+- **Out of scope (decision of the product owner, 2026-10-28): a hidden age/sex cell can be recovered from the exact final count.** The shown cells of the baseline grid plus the sum of masked cells equal the exact final count, so a single masked cell (1 to 10) is exposed by subtraction. Complementary suppression (also masking the next-smallest cell when exactly one is hidden) was considered in issue [#54](https://github.com/erickyegon/cohortlens/issues/54) and **deferred**: the data is synthetic, and the limitation stays documented. The issue is in the Backlog.
 
 ## Baseline table (`baseline.py`)
 
