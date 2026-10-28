@@ -23,8 +23,10 @@ COHORT_ID = "6f1c1f0e-5b1c-4d55-9a0e-0a5f4c2b9a11"
 BASE = "https://candidate---cohortlens-api-dev-abc123-ul.a.run.app"
 
 FAKE_CURL = r"""#!/usr/bin/env bash
-# a fake curl: finds the method and URL, answers from $FAKE_CURL_DIR/<METHOD>_<path with / as _> (first line = status
-# code, the rest = body), and prints the body then the status code on its own last line (what `-w '\n%{http_code}'` does)
+# a fake curl: finds the method and URL, answers from $FAKE_CURL_DIR/<METHOD>_<path with / as _> (first line =
+# status code, the rest = body), and prints the body then the status code on its own last line, as curl does for
+# -w '
+%{http_code}'
 printf '%s\x1f' "$@" >> "$FAKE_LOG"; printf '\n' >> "$FAKE_LOG"
 method=GET; url=""; previous=""
 for argument in "$@"; do
@@ -143,7 +145,8 @@ def test_a_wrong_or_missing_final_count_fails_and_the_cohort_is_still_deleted(tm
 
 
 def test_a_failing_run_request_fails_and_the_cohort_is_still_deleted(tmp_path):
-    result, calls = run_smoke(tmp_path, BASE, overrides={f"POST__cohorts_{COHORT_ID}_runs": (504, {"error": "timeout"})})
+    timeout = {f"POST__cohorts_{COHORT_ID}_runs": (504, {"error": "timeout"})}
+    result, calls = run_smoke(tmp_path, BASE, overrides=timeout)
     assert result.returncode != 0
     assert ("DELETE", f"/cohorts/{COHORT_ID}") in methods_and_paths(calls)
 

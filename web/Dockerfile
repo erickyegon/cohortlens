@@ -7,7 +7,9 @@ COPY . .
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# rendered at start from the API_UPSTREAM and API_HOST variables; the resolver is read from /etc/resolv.conf
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 # runs as the image's non-root nginx user (uid 101) on port 8080
 EXPOSE 8080

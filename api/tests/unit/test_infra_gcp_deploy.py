@@ -33,7 +33,14 @@ printf '%s\x1f' "$@" >> "$FAKE_LOG"; printf '\n' >> "$FAKE_LOG"
 args="$*"
 if [[ "$args" == *"run services describe"* ]]; then
   if [ -n "${FAKE_DESCRIBE_ERROR:-}" ]; then echo "ERROR: (gcloud) $FAKE_DESCRIBE_ERROR" >&2; exit 1; fi
-  if [ "${FAKE_EXISTS:-1}" != "1" ]; then echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2; exit 1; fi
+  # a service that did not exist does exist once it has been deployed
+  deployed=0
+  for svc in cohortlens-api-dev cohortlens-web-dev; do
+    if [[ "$args" == *"$svc"* ]] && grep -qa "run"$'\x1f'"deploy"$'\x1f'"$svc" "$FAKE_LOG"; then deployed=1; fi
+  done
+  if [ "${FAKE_EXISTS:-1}" != "1" ] && [ "$deployed" = "0" ]; then
+    echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2; exit 1
+  fi
   if [[ "$args" == *"cohortlens-api-"* ]]; then echo "https://cohortlens-api-dev-abc123-ul.a.run.app"; fi
   if [[ "$args" == *"cohortlens-web-"* ]]; then echo "https://cohortlens-web-dev-abc123-ul.a.run.app"; fi
   exit 0
@@ -222,7 +229,8 @@ def test_nothing_is_deleted_and_no_iam_policy_is_touched(tmp_path):
 
 
 def test_a_describe_that_fails_for_another_reason_is_not_treated_as_a_first_deploy(tmp_path):
-    result, calls, _ = run_deploy(tmp_path, env={"FAKE_DESCRIBE_ERROR": "PERMISSION_DENIED: caller lacks run.services.get"})
+    error = "PERMISSION_DENIED: caller lacks run.services.get"
+    result, calls, _ = run_deploy(tmp_path, env={"FAKE_DESCRIBE_ERROR": error})
     assert result.returncode != 0
     assert starting(calls, "run", "deploy") == [] and starting(calls, "run", "services", "update-traffic") == []
 

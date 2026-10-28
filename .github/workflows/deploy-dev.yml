@@ -1,0 +1,86 @@
+name: Deploy dev
+
+# Every merge to main goes to dev: images tagged with the git sha are pushed to Artifact Registry, the
+# Neon dev branch is migrated, each service gets a no-traffic candidate revision that is smoke tested, and only then
+# does traffic move (infra/gcp/deploy.sh holds the logic and is tested). Prod is a separate, approval-gated workflow.
+#
+# Needs (once): `bash infra/gcp/setup.sh --apply` and the GitHub repository variables it prints (docs/deployment.md).
+# Until GCP_PROJECT_ID is set the job is skipped; if only some variables are set it stops at its first step.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false  # never cut a deploy off half way
+
+permissions:
+  contents: read
+  id-token: write  # workload identity federation: no key files
+
+jobs:
+  deploy:
+    name: deploy dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # the deploy account trusts only workflows on main (setup.sh), so a manual run from another branch would fail anyway;
+    # and nothing runs (instead of failing) until the Google Cloud setup has been done and its variables are set
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != ''
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
+      RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA_DEV }}
+    steps:
+      - name: Check that the Google Cloud variables are set
+        run: |
+          missing=0
+          for name in PROJECT_ID REGION REGISTRY RUNTIME_SA; do
+            if [ -z "${!name}" ]; then echo "::error::the repository variable for $name is not set (run infra/gcp/setup.sh --apply and set the variables it prints)"; missing=1; fi
+          done
+          [ -n "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}" ] || { echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER is not set"; missing=1; }
+          [ -n "${{ vars.GCP_DEPLOY_SA_DEV }}" ] || { echo "::error::GCP_DEPLOY_SA_DEV is not set"; missing=1; }
+          exit $missing
+
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_DEV }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push the api image (tagged with the git sha)
+        id: api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          push: true
+          tags: ${{ vars.GCP_ARTIFACT_REGISTRY }}/api:${{ github.sha }}
+          build-args: SERVICE_VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build and push the web image (tagged with the git sha)
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          push: true
+          tags: ${{ vars.GCP_ARTIFACT_REGISTRY }}/web:${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+      - name: Migrate, deploy candidates, smoke test, move traffic
+        run: >
+          bash infra/gcp/deploy.sh --env dev --version "${{ github.sha }}"
+          --api-image "${REGISTRY}/api@${{ steps.api.outputs.digest }}"
+          --web-image "${REGISTRY}/web@${{ steps.web.outputs.digest }}"
