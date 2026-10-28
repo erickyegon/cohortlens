@@ -135,6 +135,10 @@ It builds nothing, deploys nothing, deletes nothing and touches no IAM.
 
 **Verified against the real project:** a `--dry-run` for dev `api` and `web` (it reads the real revisions and traffic and moves nothing). That run found a bug (Windows `gcloud` prints CRLF line endings, so revision names carried a trailing carriage return), now fixed and tested. **No real traffic move has been run yet.**
 
+## Telemetry export (optional)
+
+Set the repository variable `GCP_OTLP_ENDPOINT` (a Grafana Cloud OTLP URL such as `https://otlp-gateway-prod-us-east-2.grafana.net/otlp`) and store the credential with `scripts/store_otlp_secret.sh`; the api service then exports traces, metrics and logs. The secret slot is created by that script, not by `setup.sh`. The steps are in `docs/observability.md`. Unset, nothing is exported and the deploys are unchanged.
+
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.
 
