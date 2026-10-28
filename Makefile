@@ -23,8 +23,10 @@ chaos:
 verify-seed:
 	bash data/etl/verify_seed.sh
 
+# Neon dev branch: roles, schema, seed, and the two database URLs into Secret Manager (see scripts/seed_cloud.sh)
+# usage: NEON_DEV_URL='postgresql://...' make seed-cloud ARGS="--confirm-endpoint ep-xxxx"
 seed-cloud:
-	@echo "TODO: load data/seed/omop_subset.sql.gz into Neon (phase 4)" && exit 1
+	bash scripts/seed_cloud.sh --env dev $(ARGS)
 
 smoke:
 	bash scripts/smoke_compose.sh
