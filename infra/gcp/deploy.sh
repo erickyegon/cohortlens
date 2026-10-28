@@ -52,6 +52,8 @@ PROJECT_ID="${PROJECT_ID-}"; REGION="${REGION-}"; RUNTIME_SA="${RUNTIME_SA-}"
 # an environment only ever runs as its own runtime account (cohortlens-run-dev / cohortlens-run-prod)
 [[ "$RUNTIME_SA" == "cohortlens-run-${ENVIRONMENT}@"* ]] || refuse "RUNTIME_SA must be the cohortlens-run-${ENVIRONMENT} account for --env ${ENVIRONMENT}"
 
+PYTHON="$(command -v python3 || command -v python || true)"
+[ -n "$PYTHON" ] || refuse "python is required to read the traffic of a service"
 SMOKE="${SMOKE_SCRIPT:-$(dirname "$0")/../../scripts/smoke_cloud.sh}"
 TARGET=(--region="$REGION" --project="$PROJECT_ID")
 API="cohortlens-api-${ENVIRONMENT}"
@@ -61,6 +63,23 @@ APP_SECRET="cohortlens-${ENVIRONMENT}-database-url-app"
 READER_SECRET="cohortlens-${ENVIRONMENT}-database-url-reader"
 
 heading() { echo; echo "== $*"; }
+
+# serving_revision NAME: the ONE revision that holds all the traffic of a service right now (anything else is refused).
+# Read before the candidate is deployed and again before traffic moves: if it changed in between, someone rolled the
+# service back (or deployed) while this run was going, and moving the traffic now would undo that.
+serving_revision() {
+  local json
+  json="$(gcloud run services describe "$1" "${TARGET[@]}" --format=json)" || die "could not read $1"
+  printf '%s' "$json" | "$PYTHON" -c '
+import json, sys
+try:
+    live = [t for t in json.load(sys.stdin)["status"]["traffic"] if t.get("percent", 0) > 0]
+    assert len(live) == 1 and live[0]["percent"] == 100 and live[0]["revisionName"]
+    print(live[0]["revisionName"])
+except Exception:
+    sys.exit(1)
+' || die "$1 does not have exactly one revision serving all its traffic; not deploying on top of that"
+}
 
 # service_url NAME: the main URL of a service
 service_url() { gcloud run services describe "$1" "${TARGET[@]}" --format='value(status.url)'; }
@@ -95,12 +114,17 @@ deploy_service() {
     return 0
   fi
 
-  heading "${name}: candidate revision (no traffic)"
+  local serving_before serving_now
+  serving_before="$(serving_revision "$name")" || exit 1
+  heading "${name}: candidate revision (no traffic); serving now: ${serving_before}"
   gcloud run deploy "$name" "${flags[@]}" --no-traffic --tag=candidate "${TARGET[@]}"
   url="$(service_url "$name")"
   candidate_url="${url/https:\/\//https:\/\/candidate---}"
   heading "${name}: smoke test on ${candidate_url}"
   bash "$SMOKE" "$candidate_url" "${smoke_args[@]}" || die "smoke test failed on the candidate of ${name}; traffic was NOT moved"
+  serving_now="$(serving_revision "$name")" || exit 1
+  [ "$serving_before" = "$serving_now" ] \
+    || die "the traffic of ${name} changed during this deploy (it was on ${serving_before}, now ${serving_now}); NOT moving it to the new revision, so a rollback is not undone. The new revision stays as a no-traffic candidate"
   heading "${name}: move traffic to the new revision"
   gcloud run services update-traffic "$name" --to-latest --remove-tags=candidate "${TARGET[@]}"
 }

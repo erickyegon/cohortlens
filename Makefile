@@ -24,7 +24,8 @@ verify-seed:
 	bash data/etl/verify_seed.sh
 
 # Neon dev branch: roles, schema, seed, and the two database URLs into Secret Manager (see scripts/seed_cloud.sh)
-# usage: NEON_DEV_URL='postgresql://...' make seed-cloud ARGS="--confirm-endpoint ep-xxxx"
+# usage: NEON_DEV_URL='postgresql://...' make seed-cloud ARGS="--confirm-endpoint ep-xxxx"   (dev only)
+# prod has extra guards and is run directly: bash scripts/seed_cloud.sh --env prod --confirm-endpoint ep-xxxx --yes-this-is-production
 seed-cloud:
 	bash scripts/seed_cloud.sh --env dev $(ARGS)
 

@@ -1,0 +1,116 @@
+name: Rollback
+
+# Roll one service back by shifting its traffic to an earlier Cloud Run revision: no rebuild, no redeploy
+# (infra/gcp/rollback.sh holds the logic and is tested). Started by hand: Actions -> Rollback -> Run workflow.
+#   - leave "revision" empty to go to the revision before the one serving now, or give a revision name;
+#   - give an incident issue number to have the result commented there; tick "dry run" to only see the plan.
+# Afterwards the smoke test runs on the service URL. A failed smoke test fails the run but does not move traffic back.
+#
+# The prod job runs in the protected `production` environment, which is the only place the prod deploy account can be
+# used (setup.sh), so a prod rollback waits for the reviewer's approval like a promotion does.
+# Needs (once): the Google Cloud setup and its repository variables (docs/deployment.md); skipped until GCP_PROJECT_ID is set.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Which environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+      service:
+        description: "Which service"
+        required: true
+        type: choice
+        options: [api, web]
+      revision:
+        description: "Revision to roll back to, e.g. cohortlens-api-dev-00002-abc (empty = the one before the serving revision)"
+        required: false
+        type: string
+      incident:
+        description: "Incident issue number to comment on (empty = no comment)"
+        required: false
+        type: string
+      dry_run:
+        description: "Only print what would happen"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write  # workload identity federation: no key files
+  issues: write    # to comment on the incident issue
+
+jobs:
+  rollback-dev:
+    name: rollback dev
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' && inputs.environment == 'dev'
+    concurrency:
+      group: rollback-dev  # its own group: GitHub keeps one pending run per group, so a queued deploy must not replace a waiting rollback
+      cancel-in-progress: false
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # the inputs go through the environment and are validated by rollback.sh, never into the shell inline
+      ROLLBACK_SERVICE: ${{ inputs.service }}
+      ROLLBACK_REVISION: ${{ inputs.revision }}
+      ROLLBACK_INCIDENT: ${{ inputs.incident }}
+      ROLLBACK_DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_DEV }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Roll back by traffic shift
+        run: |
+          args=(--env dev --service "$ROLLBACK_SERVICE")
+          if [ -n "$ROLLBACK_REVISION" ]; then args+=(--revision "$ROLLBACK_REVISION"); fi
+          if [ -n "$ROLLBACK_INCIDENT" ]; then args+=(--incident "$ROLLBACK_INCIDENT"); fi
+          if [ "$ROLLBACK_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          bash infra/gcp/rollback.sh "${args[@]}"
+
+  rollback-prod:
+    name: rollback prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' && inputs.environment == 'prod'
+    environment: production
+    concurrency:
+      group: rollback-prod  # its own group (see above); a deploy that is mid-flight refuses to move traffic that changed under it
+      cancel-in-progress: false
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ROLLBACK_SERVICE: ${{ inputs.service }}
+      ROLLBACK_REVISION: ${{ inputs.revision }}
+      ROLLBACK_INCIDENT: ${{ inputs.incident }}
+      ROLLBACK_DRY_RUN: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_PROD }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Roll back by traffic shift
+        run: |
+          args=(--env prod --service "$ROLLBACK_SERVICE")
+          if [ -n "$ROLLBACK_REVISION" ]; then args+=(--revision "$ROLLBACK_REVISION"); fi
+          if [ -n "$ROLLBACK_INCIDENT" ]; then args+=(--incident "$ROLLBACK_INCIDENT"); fi
+          if [ "$ROLLBACK_DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          bash infra/gcp/rollback.sh "${args[@]}"

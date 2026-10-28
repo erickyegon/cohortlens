@@ -55,6 +55,7 @@ exit 0
 FAKE_GCLOUD = r"""#!/usr/bin/env bash
 n=$(( $(cat "$FAKE_DIR/gcount" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_DIR/gcount"
 printf '%s\x1f' "$@" > "$FAKE_DIR/gcloud_args_$n"
+if [[ "$*" == *"versions list"* ]] && [ "${FAKE_LIST_FAIL:-0}" = "1" ]; then echo "ERROR: list failed" >&2; exit 1; fi
 if [[ "$*" == *"versions add"* ]]; then
   cat > "$FAKE_DIR/gcloud_stdin_$n"
   if [ "${FAKE_SECRET_WRITE_FAIL:-0}" = "1" ]; then echo "ERROR: write failed" >&2; exit 1; fi
@@ -417,7 +418,7 @@ def test_prod_refuses_an_endpoint_that_dev_already_uses_before_touching_the_data
     dev_url = f"postgresql://cohortlens_app:{OTHER_PASSWORD}@{PROD_HOST}/neondb?sslmode=require"
     result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL",
                             env={"FAKE_OTHER_URL": dev_url})
-    assert result.returncode != 0 and "dev" in result.stderr.lower()
+    assert result.returncode != 0 and "is the one dev already uses" in result.stderr
     assert files(work, "psql_args") == [] and secret_writes(work) == []
     assert OTHER_PASSWORD not in all_text(result, work) and OWNER_PASSWORD not in all_text(result, work)
 
@@ -425,14 +426,14 @@ def test_prod_refuses_an_endpoint_that_dev_already_uses_before_touching_the_data
 def test_dev_refuses_an_endpoint_that_prod_already_uses(tmp_path):
     prod_url = f"postgresql://cohortlens_app:{OTHER_PASSWORD}@{HOST}/neondb?sslmode=require"
     result, work = run_seed(tmp_path, env={"FAKE_OTHER_URL": prod_url})
-    assert result.returncode != 0 and "prod" in result.stderr.lower()
+    assert result.returncode != 0 and "is the one prod already uses" in result.stderr
     assert files(work, "psql_args") == [] and secret_writes(work) == []
 
 
 def test_prod_is_refused_until_dev_has_been_prepared(tmp_path):
     result, work = run_seed(tmp_path, *PROD_ARGS, admin_url=PROD_URL, url_var="NEON_PROD_URL",
                             env={"FAKE_SECRET_VERSION": ""})
-    assert result.returncode != 0 and "dev" in result.stderr.lower()
+    assert result.returncode != 0 and "dev has not been prepared yet" in result.stderr
     assert files(work, "psql_args") == []
 
 
@@ -461,3 +462,17 @@ def test_prod_can_be_run_twice_and_rotated_like_dev(tmp_path):
     rotated, work = run_seed(tmp_path, *PROD_ARGS, "--rotate-passwords", admin_url=PROD_URL, url_var="NEON_PROD_URL",
                              env=existing)
     assert rotated.returncode == 0 and len(secret_writes(work)) == 2
+
+
+def test_an_other_environment_secret_that_holds_no_readable_host_stops_the_run_before_the_database(tmp_path):
+    for value in ("not a url", "postgresql://user:pw@/neondb"):
+        result, work = run_seed(tmp_path, env={"FAKE_OTHER_URL": value})
+        assert result.returncode != 0 and "does not hold a database URL" in result.stderr
+        assert files(work, "psql_args") == [] and secret_writes(work) == []
+        assert value not in result.stderr and "pw" not in result.stderr.replace("password", "")
+
+
+def test_a_failing_check_of_the_other_environments_secret_stops_the_run_before_the_database(tmp_path):
+    result, work = run_seed(tmp_path, env={"FAKE_LIST_FAIL": "1"})
+    assert result.returncode != 0 and "could not check whether prod has been prepared" in result.stderr
+    assert files(work, "psql_args") == [] and secret_writes(work) == []
