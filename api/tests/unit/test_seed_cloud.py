@@ -10,6 +10,7 @@ to run twice; never delete or drop anything.
 import os
 import pathlib
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -23,7 +24,7 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash is required to run th
 
 ENDPOINT = "ep-cool-dev-123456"
 HOST = f"{ENDPOINT}.us-east-2.aws.neon.tech"
-OWNER_PASSWORD = "OwnerSecretPw123"
+OWNER_PASSWORD = "fake" + secrets.token_hex(8)  # generated per run: no credential-looking literal in the repository
 ADMIN_URL = f"postgresql://neondb_owner:{OWNER_PASSWORD}@{HOST}/neondb?sslmode=require"
 SEP = "\x1f"
 
@@ -326,3 +327,28 @@ def test_nothing_is_dropped_deleted_or_truncated(tmp_path):
     for word in ("DROP ", "TRUNCATE", "DELETE FROM", "DESTROY", " DELETE"):
         assert word not in seed_free, word
     assert "versions destroy" not in text.lower() and "secrets delete" not in text.lower()
+
+
+def test_a_failed_secret_write_says_how_to_recover_because_the_roles_have_already_changed(tmp_path):
+    result, work = run_seed(tmp_path, env={"FAKE_SECRET_WRITE_FAIL": "1"})
+    assert result.returncode != 0
+    assert "--rotate-passwords" in result.stderr and "secret" in result.stderr.lower()
+
+
+def test_a_failed_secret_write_during_rotation_says_how_to_recover(tmp_path):
+    result, _ = run_seed(tmp_path, "--env", "dev", "--confirm-endpoint", ENDPOINT, "--rotate-passwords",
+                         env={"FAKE_ROLES_EXIST": "2", "FAKE_PERSON_BEFORE": "5724", "FAKE_SECRET_WRITE_FAIL": "1"})
+    assert result.returncode != 0 and "--rotate-passwords" in result.stderr
+
+
+def test_only_enabled_secret_versions_count_as_a_stored_value(tmp_path):
+    _, work = seeded(tmp_path, env={"FAKE_ROLES_EXIST": "2", "FAKE_PERSON_BEFORE": "5724"})
+    listing = [args for args in files(work, "gcloud_args") if "list" in args.split(SEP)]
+    assert len(listing) == 2 and all("--filter=state=enabled" in args.split(SEP) for args in listing)
+
+
+@pytest.mark.parametrize("host", [f"{ENDPOINT}.example.com", ENDPOINT, f"{ENDPOINT}.neon.tech.evil.io"])
+def test_a_host_that_is_not_a_neon_host_is_refused(tmp_path, host):
+    url = f"postgresql://neondb_owner:{OWNER_PASSWORD}@{host}/neondb?sslmode=require"
+    result, work = run_seed(tmp_path, admin_url=url)
+    assert result.returncode != 0 and files(work, "psql_args") == []

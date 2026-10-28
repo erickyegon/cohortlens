@@ -8,7 +8,8 @@
 # NEON_DEV_URL is the DIRECT (not pooled) connection string of the owner role on the `dev` branch. It is read from the
 # environment only; it is never printed and never put on a command line (psql gets it through libpq variables).
 # --confirm-endpoint must be the endpoint id (ep-...) of the branch you mean, so a production URL pasted by mistake is
-# refused. Settings: PROJECT_ID (default cohortlens). Needs gcloud signed in, and psql or Docker.
+# refused. Use the connection string exactly as Neon gives it. Settings: PROJECT_ID (default cohortlens). Needs gcloud
+# signed in, and psql or Docker. Never run it with `bash -x` (that would print the passwords).
 #
 # What it does, in this order, and only this:
 #   1. creates the roles cohortlens_reader and cohortlens_app with generated passwords and the schema app
@@ -30,7 +31,7 @@ while (( $# )); do
       if [ "$1" = "--env" ]; then ENVIRONMENT="$2"; else CONFIRM="$2"; fi
       shift 2 ;;
     --rotate-passwords) ROTATE=1; shift ;;
-    -h | --help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1'" >&2; exit 2 ;;
   esac
 done
@@ -50,6 +51,7 @@ OWNER="${BASH_REMATCH[2]}" OWNER_PASSWORD="${BASH_REMATCH[3]}" DB_HOST="${BASH_R
 DB_NAME="${BASH_REMATCH[7]}" QUERY="${BASH_REMATCH[8]}"
 URL=""
 [[ "&${QUERY}&" == *"&sslmode=require&"* ]] || refuse "NEON_DEV_URL must contain sslmode=require"
+[[ "$DB_HOST" == *.neon.tech ]] || refuse "NEON_DEV_URL must be the connection string Neon gives you (host ending in .neon.tech)"
 [[ "$DB_HOST" != *-pooler* ]] || refuse "NEON_DEV_URL is a pooled connection; use the direct one (untick 'Connection pooling' in the Neon console)"
 [ "${DB_HOST%%.*}" = "$CONFIRM" ] || refuse "the endpoint in NEON_DEV_URL (${DB_HOST%%.*}) is not the one you confirmed (${CONFIRM}); nothing was touched"
 
@@ -100,14 +102,14 @@ if [ "$roles_existing" = "0" ] || (( ROTATE )); then
   [ "$roles_existing" = "0" ] && role_sql=db/cloud/00-roles.sql || role_sql=db/cloud/01-rotate.sql
   { printf "\\\\set app_pw '%s'\n" "$app_password"; printf "\\\\set reader_pw '%s'\n" "$reader_password"; cat "$role_sql"; } \
     | sql --single-transaction -v ON_ERROR_STOP=1 -q -f -
-  write_secret app "$app_password"
-  write_secret reader "$reader_password"
+  # the roles have changed now: if a secret cannot be stored, the stored URLs (if any) no longer match the roles
+  { write_secret app "$app_password" && write_secret reader "$reader_password"; }     || die "the roles were changed but the database URLs could NOT be stored in Secret Manager; run again with --rotate-passwords to set new passwords and store them"
   unset app_password reader_password
   echo "  stored new versions of $(secret_name app) and $(secret_name reader)"
 else
   heading "roles: already there"
   for kind in app reader; do
-    [ -n "$(gcloud secrets versions list "$(secret_name "$kind")" --limit=1 --format='value(name)' --project="$PROJECT_ID")" ] \
+    [ -n "$(gcloud secrets versions list "$(secret_name "$kind")" --filter='state=enabled' --limit=1 --format='value(name)' --project="$PROJECT_ID")" ] \
       || die "the roles already exist but $(secret_name "$kind") has no value; run again with --rotate-passwords to set new passwords and store them"
   done
   echo "  the roles and both secrets already exist; passwords unchanged (use --rotate-passwords to change them)"

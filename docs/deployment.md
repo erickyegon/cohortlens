@@ -70,6 +70,14 @@ Run once per environment, by hand, before the first deploy. It prepares the Neon
    `make seed-cloud ARGS="--confirm-endpoint ep-xxxx"`
 3. Close the terminal or `unset NEON_DEV_URL` afterwards.
 
+Use the connection string exactly as Neon gives it (the host must end in `.neon.tech`; a password with special characters stays percent-encoded and is passed on as is). **Never run the script with `bash -x`**: that would print the passwords.
+
+**If it stops half way.** The order is roles, then the two secret versions, then the seed, then the grants, so each stop has one way out:
+- *The roles were created or rotated but the secrets could not be stored* (the script says so): run it again with `--rotate-passwords`, which sets new passwords and stores them.
+- *The roles exist and a secret has no enabled version*: the script refuses and tells you to run again with `--rotate-passwords`.
+- *The seed failed*: nothing of it was kept (one transaction); run it again, and it reloads the seed because the database has no persons.
+- A plain re-run reports "passwords unchanged" when the roles and both secrets exist; it cannot tell whether the stored URL still works. After any doubt, `--rotate-passwords` makes them agree again.
+
 The confirmation exists so that a production connection string pasted by mistake is refused: the endpoint in the URL must be the one you typed. Needs `psql` or Docker (it falls back to the `postgres:18` image's `psql`). It is safe to run twice (existing roles keep their passwords, existing data is not reloaded); `--rotate-passwords` sets new passwords on the existing roles and stores new secret versions. It never drops, truncates or deletes anything. Prod is a separate, deliberate step, not supported by this script yet.
 
 The cloud role SQL differs from the local init script in one way: the Neon owner is not a superuser, so the `app` schema is created by the owner and `cohortlens_app` is granted `USAGE, CREATE` on it (instead of `CREATE SCHEMA ... AUTHORIZATION cohortlens_app`). Rehearsed against a throwaway Postgres 18 with a non-superuser owner: roles, grants, password enforcement, the Alembic migration as `cohortlens_app`, a second run and a rotation all behaved as described. Not run against Neon itself.
