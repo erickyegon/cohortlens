@@ -89,7 +89,7 @@ Status: **done**, **partial**, **not started**. Links are to merged PRs and issu
 | Vitest tests | done | [#50](https://github.com/erickyegon/cohortlens/pull/50) |
 | Stretch: Playwright e2e | **not started** | issue [#32](https://github.com/erickyegon/cohortlens/issues/32); `make e2e` is a TODO that exits 1 |
 
-### Phase 4: delivery: **done for dev and prod** *(updated after E4)*, observability not started
+### Phase 4: delivery: **done for dev and prod** *(updated after E4)*
 | Item | Status | Evidence |
 |---|---|---|
 | CI on every PR | done | [#33](https://github.com/erickyegon/cohortlens/pull/33), issue #16; required checks (verified) |
@@ -98,7 +98,7 @@ Status: **done**, **partial**, **not started**. Links are to merged PRs and issu
 | Artifact Registry | **done** *(updated after E4)* | Repository `cohortlens` in `us-east5`; images tagged with the git sha and deployed by digest ([run 40726828355](https://github.com/erickyegon/cohortlens/actions/runs/40726828355)). |
 | Workload Identity Federation | **done** *(updated after E4)* | Pool `github` and provider `github-actions`, pinned to this repository's name and numeric ids; the hardened script ([#57](https://github.com/erickyegon/cohortlens/pull/57), F10 to F14 fixed in [#61](https://github.com/erickyegon/cohortlens/pull/61)) ran for real; real deploys authenticate with no keys. |
 | Cloud Run services | **done** *(updated after E4)* | `cohortlens-api-dev`, `cohortlens-web-dev`, `cohortlens-api-prod`, `cohortlens-web-prod` (URLs above). |
-| Dev auto-deploy on merge | **done** *(updated after E4)* | Issue [#17](https://github.com/erickyegon/cohortlens/issues/17) closed with evidence; [#62](https://github.com/erickyegon/cohortlens/pull/62), [#65](https://github.com/erickyegon/cohortlens/pull/65), [#67](https://github.com/erickyegon/cohortlens/pull/67). The first real run failed (section 9) and was fixed. |
+| Dev auto-deploy on merge | **done** *(updated after E4)* | Issue [#17](https://github.com/erickyegon/cohortlens/issues/17) closed with evidence; [#62](https://github.com/erickyegon/cohortlens/pull/62), [#65](https://github.com/erickyegon/cohortlens/pull/65), [#67](https://github.com/erickyegon/cohortlens/pull/67). The first real run failed (section 10) and was fixed. |
 | Prod approval gate, same image promoted | **done, with one gap** *(updated after E4)* | [#64](https://github.com/erickyegon/cohortlens/pull/64); first promotion [run 40728098994](https://github.com/erickyegon/cohortlens/actions/runs/40728098994) waited in the `production` environment, was approved by the owner, and prod serves dev's digests. **Issue [#18](https://github.com/erickyegon/cohortlens/issues/18) is left open on purpose:** its second criterion ("deployed with `--no-traffic`") and third ("a failed smoke test on the tagged URL: traffic never moves") were tested with fakes and shown on dev, but the first prod deploy of a service goes live directly, so neither was exercised on prod. The next promotion will. |
 | Rollback by traffic shift | **done** *(updated after E4)* | Issue [#19](https://github.com/erickyegon/cohortlens/issues/19) closed with evidence; [#67](https://github.com/erickyegon/cohortlens/pull/67). Drill on dev: [run 40727380877](https://github.com/erickyegon/cohortlens/actions/runs/40727380877) (dry run), [run 40727516793](https://github.com/erickyegon/cohortlens/actions/runs/40727516793) (real, with the target checked on its own tagged URL first), [run 40727781451](https://github.com/erickyegon/cohortlens/actions/runs/40727781451) (a normal deploy restored traffic). A prod rollback was not exercised. |
 
@@ -175,7 +175,7 @@ Estimates are the author's, including review cycles, for one person-equivalent o
 | 9 | Stretch: Playwright e2e ([#32](https://github.com/erickyegon/cohortlens/issues/32)) | 3 | none | | |
 | 10 | **Next (agreed order):** E5 lean (direct OTLP to Grafana Cloud, traces, metrics and logs with a shared trace id, allowlist scrubber and leak test, one dashboard and two alert rules as exported files with an apply script), then E6 lean (scenario S1 only), then the last hour: README with live URLs and the scorecard map, ADRs 003 to 005, spec on comorbidities, the 80% coverage claim removed or gated | about 26 | **+2** (row 10) **+1** (row 11) **+2** (row 12) | prod is live | Grafana Cloud account, Anthropic API key as a GitHub secret, the demo recording |
 
-Points per hour: item 3 is about 0.33, item 4 about 0.25, item 5 about 0.23, item 6 about 0.15. Item 1 is first because it is cheap and protects points already counted. Total remaining for all nine points: roughly 39 hours, against 24 hours planned for the original must-have scope.
+Points per hour *(at the audit; items 2, 3, 4 and 7 are now done)*: item 3 is about 0.33, item 4 about 0.25, item 5 about 0.23, item 6 about 0.15. Item 1 is first because it is cheap and protects points already counted. Total remaining for all nine points *(at the audit)*: roughly 39 hours *(after E4, about 26 hours remain for the last 5 points: E5 about 13, E6 about 13)*, against 24 hours planned for the original must-have scope.
 
 ---
 
@@ -183,7 +183,7 @@ Points per hour: item 3 is about 0.33, item 4 about 0.25, item 5 about 0.23, ite
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
-| **Real-cloud behaviour of the parts not yet exercised** *(updated after E4; was "nothing is deployed")* | Dev and prod are live, but a prod rollback, a failed prod smoke test and `--no-verify` have not run for real; E5 and E6 will touch the cloud for the first time | The first real deploy found three bugs fakes could not (section 9); expect the same for E5 and E6 and budget for it |
+| **Real-cloud behaviour of the parts not yet exercised** *(updated after E4; was "nothing is deployed")* | Dev and prod are live, but a prod rollback, a failed prod smoke test and `--no-verify` have not run for real; E5 and E6 will touch the cloud for the first time | The first real deploy found three bugs fakes could not (section 10); expect the same for E5 and E6 and budget for it |
 | **Deployment must stay up through peer review** | Neon compute sleeps; Cloud Run bills; the $5 budget only alerts, it does not stop spending | Keep `max-instances` low, load only on demand, link the recorded demo video as the backup the rubric allows |
 | ~~**`verify-seed` is flaky**~~ *(fixed in [#59](https://github.com/erickyegon/cohortlens/pull/59), updated after E4)* | The race was the postgres image's temporary init server; the wait now needs the real server. The race was inferred from the image's behaviour and the script, not captured from a failed run. | Watch CI; if it recurs the wait prints the container log |
 | **README out of date and no scorecard map** | Peer reviewers start there | Item 1 |
@@ -232,7 +232,7 @@ All verified from the GitHub API at audit time.
 | Alert rules as code | **not done** |
 | Incident issue closed by the agent | **not done** |
 | Demo video | **not done** |
-| Secrets clean | **done** (scan of tree and history found none; local-only default passwords in `compose.yaml` are documented placeholders; one exposed Neon credential was rotated) |
+| Secrets clean | **done** (scan of tree and history found none; local-only default passwords in `compose.yaml` are documented placeholders; two exposed Neon credentials, on 2026-10-27 and 2026-10-28, were rotated or reset before use; section 6) |
 | Three peer reviews | **not started** (yours) |
 
 ---
