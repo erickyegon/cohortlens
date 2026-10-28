@@ -8,7 +8,11 @@ CohortLens needs a live URL, a Postgres database that holds the OMOP seed, a dep
 ## Decision
 - **Cloud Run** runs the API and the web container, in `us-east5`, next to the database. Revisions are immutable and traffic can be moved between them, so a rollback is a traffic shift, not a rebuild (ADR-004).
 - **Neon** hosts Postgres 18 (AWS US East 2, project `cohortlens`) with two branches, `production` and `dev`. CI, the local Compose stack and the tests run Postgres 18 too, so the engine is tested on the version it runs on.
-- **Render was the alternative and was not chosen**, because the plan needs per-revision traffic shifting for rollback and keyless deploys from GitHub Actions (workload identity federation), which Cloud Run gives directly.
+- **Render was the alternative and was rejected** for three reasons, all on its free tier:
+  - Free web services **sleep after 15 minutes idle and take about a minute to wake**. A sleeping service would trigger false latency alerts and break the latency target.
+  - Free Postgres **expires after 30 days**, so the database would be offline during peer review.
+  - Cloud Run was chosen for its **built-in rollback by traffic shift between revisions** (ADR-004).
+- **Deploys from GitHub Actions use workload identity federation**, so there are no long-lived key files.
 - **One Google Cloud project holds both environments** (dev and prod services side by side).
 
 ## Accepted risk: dev and prod share one Google Cloud project
