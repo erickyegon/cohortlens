@@ -65,8 +65,11 @@ def test_it_may_comment_on_issues_and_nothing_else_beyond_reading_the_repository
     assert "pull-requests: write" not in WORKFLOW and "contents: write" not in WORKFLOW
 
 
-def test_it_waits_for_a_running_deploy_instead_of_racing_it():
-    assert "group: deploy-dev" in job("rollback-dev") and "group: promote-prod" in job("rollback-prod")
+def test_rollbacks_have_their_own_concurrency_groups_so_a_queued_deploy_cannot_replace_a_waiting_rollback():
+    """GitHub keeps one pending run per group: a rollback sharing a group with deploys could be silently replaced."""
+    dev, prod = job("rollback-dev"), job("rollback-prod")
+    assert "group: rollback-dev" in dev and "group: rollback-prod" in prod
+    assert "deploy-dev" not in dev and "promote-prod" not in prod
     assert WORKFLOW.count("cancel-in-progress: false") == 2
 
 

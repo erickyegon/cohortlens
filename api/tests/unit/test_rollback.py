@@ -44,6 +44,11 @@ if [ -n "${FAKE_GCLOUD_ERROR:-}" ] && [[ "$args" == *"${FAKE_GCLOUD_ERROR_ON:-ru
   echo "ERROR: (gcloud) $FAKE_GCLOUD_ERROR" >&2; exit 1
 fi
 if [[ "$args" == *"update-traffic"* ]]; then
+  if [[ "$args" == *"--update-tags="* ]]; then
+    if [ "${FAKE_TAG_FAIL:-0}" = "1" ]; then echo "ERROR: tag failed" >&2; exit 1; fi
+    printf 'tag\n' >> "$FAKE_ORDER"; exit 0
+  fi
+  if [[ "$args" == *"--remove-tags="* ]]; then printf 'untag\n' >> "$FAKE_ORDER"; exit 0; fi
   if [ "${FAKE_UPDATE_FAIL:-0}" = "1" ]; then echo "ERROR: update failed" >&2; exit 1; fi
   printf 'move\n' >> "$FAKE_ORDER"
   exit 0
@@ -71,7 +76,10 @@ exit 0
 FAKE_SMOKE = r"""#!/usr/bin/env bash
 printf '%s\x1f' "$@" >> "$FAKE_SMOKE_LOG"; printf '\n' >> "$FAKE_SMOKE_LOG"
 printf 'smoke\n' >> "$FAKE_ORDER"
+case "$*" in *"rollback-check---"*) tagged=1 ;; *) tagged=0 ;; esac
 [ "${FAKE_SMOKE_FAIL:-0}" = "1" ] && { echo "smoke failed" >&2; exit 1; }
+[ "$tagged" = "1" ] && [ "${FAKE_SMOKE_FAIL_TAGGED:-0}" = "1" ] && { echo "tagged smoke failed" >&2; exit 1; }
+[ "$tagged" = "0" ] && [ "${FAKE_SMOKE_FAIL_UNTAGGED:-0}" = "1" ] && { echo "smoke failed after the move" >&2; exit 1; }
 echo "SMOKE OK"
 """
 
@@ -126,8 +134,17 @@ def rolled_back(tmp_path, *args, **kwargs):
     return result, seen
 
 
+TAGGED_API = "https://rollback-check---cohortlens-api-dev-abc123-ul.a.run.app"
+TAGGED_WEB = "https://rollback-check---cohortlens-web-dev-abc123-ul.a.run.app"
+
+
 def moves(seen):
-    return [c for c in seen["gcloud"] if "update-traffic" in c]
+    """The calls that actually move traffic (the others only set or remove a verification tag)."""
+    return [c for c in seen["gcloud"] if "update-traffic" in c and any(p.startswith("--to-revisions=") for p in c)]
+
+
+def tag_calls(seen):
+    return [c for c in seen["gcloud"] if "update-traffic" in c and not any(p.startswith("--to-revisions=") for p in c)]
 
 
 API = ("--env", "dev", "--service", "api")
@@ -183,14 +200,14 @@ def test_the_web_service_and_prod_use_their_own_names(tmp_path):
 
 def test_a_smoke_test_runs_after_the_move_on_the_service_url(tmp_path):
     _, seen = rolled_back(tmp_path, *API)
-    assert seen["smoke"] == [[API_URL]]
+    assert seen["smoke"][-1] == [API_URL]
     _, seen = rolled_back(tmp_path, "--env", "dev", "--service", "web")
-    assert seen["smoke"] == [[WEB_URL, "--api-prefix", "/api"]]  # the web service is tested through its proxy
+    assert seen["smoke"][-1] == [WEB_URL, "--api-prefix", "/api"]  # the web service is tested through its proxy
 
 
-def test_the_order_is_move_then_smoke_then_comment(tmp_path):
+def test_the_order_is_verify_the_target_then_move_then_smoke_then_comment(tmp_path):
     _, seen = rolled_back(tmp_path, *API, "--incident", "42")
-    assert [line[0] for line in seen["order"]] == ["move", "smoke", "comment"]
+    assert [line[0] for line in seen["order"]] == ["tag", "smoke", "untag", "move", "smoke", "comment"]
 
 
 def test_the_incident_is_commented_with_what_happened_and_the_body_stays_off_the_command_line(tmp_path):
@@ -209,7 +226,7 @@ def test_no_comment_is_posted_without_an_incident(tmp_path):
 
 
 def test_a_failed_smoke_test_fails_the_run_keeps_the_rollback_and_says_so_in_the_comment(tmp_path):
-    result, seen = run_rollback(tmp_path, *API, "--incident", "42", env={"FAKE_SMOKE_FAIL": "1"})
+    result, seen = run_rollback(tmp_path, *API, "--incident", "42", env={"FAKE_SMOKE_FAIL_UNTAGGED": "1"})
     assert result.returncode != 0
     assert len(moves(seen)) == 1  # the traffic is NOT moved back automatically
     assert "smoke test FAILED" in seen["body"] and PREVIOUS in seen["body"]
@@ -217,7 +234,7 @@ def test_a_failed_smoke_test_fails_the_run_keeps_the_rollback_and_says_so_in_the
 
 def test_a_failed_traffic_move_runs_no_smoke_test_and_says_so_in_the_comment(tmp_path):
     result, seen = run_rollback(tmp_path, *API, "--incident", "42", env={"FAKE_UPDATE_FAIL": "1"})
-    assert result.returncode != 0 and seen["smoke"] == []
+    assert result.returncode != 0 and seen["smoke"] == [[TAGGED_API]]  # only the check before the move ran
     assert "FAILED" in seen["body"] and "traffic was not moved" in seen["body"].lower()
 
 
@@ -229,7 +246,7 @@ def test_a_failed_comment_is_a_warning_not_a_failed_rollback(tmp_path):
 
 def test_dry_run_prints_the_plan_and_changes_nothing(tmp_path):
     result, seen = rolled_back(tmp_path, *API, "--incident", "42", "--dry-run")
-    assert moves(seen) == [] and seen["smoke"] == [] and seen["gh"] == []
+    assert moves(seen) == [] and tag_calls(seen) == [] and seen["smoke"] == [] and seen["gh"] == []
     assert SERVING in result.stdout and PREVIOUS in result.stdout and "dry run" in result.stdout.lower()
 
 
@@ -297,4 +314,51 @@ def test_windows_line_endings_in_gcloud_output_are_tolerated(tmp_path):
     carried a trailing carriage return and the serving revision was reported as 'not in the revision list'."""
     _, seen = rolled_back(tmp_path, *API, env={"FAKE_CRLF": "1"})
     assert f"--to-revisions={PREVIOUS}=100" in moves(seen)[0]
-    assert seen["smoke"] == [[API_URL]]
+    assert seen["smoke"] == [[TAGGED_API], [API_URL]]
+
+
+# ---- review finding 1: never move traffic to a revision that has not been shown to work ---------------------------
+
+def test_the_target_is_tagged_and_smoke_tested_on_its_own_url_before_any_traffic_moves(tmp_path):
+    _, seen = rolled_back(tmp_path, *API)
+    tags = tag_calls(seen)
+    assert len(tags) == 2  # set the tag, remove the tag
+    assert f"--update-tags=rollback-check={PREVIOUS}" in tags[0] and "--remove-tags=rollback-check" in tags[1]
+    assert seen["smoke"][0] == [TAGGED_API]
+    _, seen = rolled_back(tmp_path, "--env", "dev", "--service", "web")
+    assert seen["smoke"][0] == [TAGGED_WEB, "--api-prefix", "/api"]
+
+
+def test_an_older_revision_that_failed_its_candidate_smoke_test_is_not_rolled_back_to(tmp_path):
+    """rev1 serves, rev2 failed its candidate smoke test and never served, rev3 passed and serves now: the default
+    target of rev3 is rev2, and moving traffic to it would put a known-bad revision in front of users."""
+    result, seen = run_rollback(tmp_path, *API, "--incident", "42", env={"FAKE_SMOKE_FAIL_TAGGED": "1"})
+    assert result.returncode != 0 and moves(seen) == []
+    assert "failed its smoke test" in result.stderr and PREVIOUS in result.stderr
+    assert "traffic was not moved" in seen["body"].lower() and PREVIOUS in seen["body"]
+
+
+def test_the_verification_tag_is_removed_even_when_the_check_fails(tmp_path):
+    _, seen = run_rollback(tmp_path, *API, env={"FAKE_SMOKE_FAIL_TAGGED": "1"})
+    assert [line[0] for line in seen["order"]] == ["tag", "smoke", "untag"]
+
+
+def test_a_tag_that_cannot_be_set_stops_the_rollback_before_anything_moves(tmp_path):
+    result, seen = run_rollback(tmp_path, *API, env={"FAKE_TAG_FAIL": "1"})
+    assert result.returncode != 0 and moves(seen) == [] and seen["smoke"] == []
+
+
+def test_an_explicit_revision_is_verified_too(tmp_path):
+    result, seen = run_rollback(tmp_path, *API, "--revision", API_REVISIONS[3], env={"FAKE_SMOKE_FAIL_TAGGED": "1"})
+    assert result.returncode != 0 and moves(seen) == []
+    assert f"--update-tags=rollback-check={API_REVISIONS[3]}" in tag_calls(seen)[0]
+
+
+def test_no_verify_is_an_explicit_emergency_switch_that_skips_only_the_check_before_the_move(tmp_path):
+    _, seen = rolled_back(tmp_path, *API, "--no-verify", "--incident", "42")
+    assert tag_calls(seen) == [] and seen["smoke"] == [[API_URL]]  # no tag; the smoke test after the move still runs
+    assert [line[0] for line in seen["order"]] == ["move", "smoke", "comment"]
+    assert "not verified before the move" in seen["body"]
+    # and it is never the default
+    _, seen = rolled_back(tmp_path, *API)
+    assert tag_calls(seen)

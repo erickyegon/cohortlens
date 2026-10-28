@@ -43,6 +43,13 @@ if [[ "$args" == *"run services describe"* ]]; then
     echo "ERROR: (gcloud.run.services.describe) Cannot find service" >&2; exit 1
   fi
   for svc in cohortlens-api-dev cohortlens-web-dev cohortlens-api-prod cohortlens-web-prod; do
+    if [[ "$args" == *"run services describe $svc "* && "$args" == *"--format=json"* ]]; then
+      seen=$(cat "$FAKE_LOG.traffic_$svc" 2>/dev/null || echo 0); echo $(( seen + 1 )) > "$FAKE_LOG.traffic_$svc"
+      revision="$svc-00001-aaa"
+      if [ "$seen" -ge 1 ] && [ "${FAKE_TRAFFIC_CHANGED:-0}" = "1" ]; then revision="$svc-00009-zzz"; fi
+      printf '{"status":{"traffic":[{"percent":100,"revisionName":"%s"}]}}' "$revision"
+      exit 0
+    fi
     if [[ "$args" == *"run services describe $svc "* ]]; then echo "https://$svc-abc123-ul.a.run.app"; fi
   done
   exit 0
@@ -327,3 +334,30 @@ def test_the_smoke_script_is_run_through_bash_because_git_stores_it_as_mode_1006
     text = SCRIPT.read_text(encoding="utf-8")
     assert 'bash "$SMOKE"' in text
     assert not [line for line in text.splitlines() if line.strip().startswith('"$SMOKE"')]
+
+
+# ---- review finding 2 of #67: a rollback during a deploy must not be undone by it ------------------------------------
+
+def json_reads(calls, name):
+    return [i for i, c in enumerate(calls) if c[:4] == ["run", "services", "describe", name] and "--format=json" in c]
+
+
+def test_the_serving_revision_is_read_before_the_candidate_and_again_before_traffic_moves(tmp_path):
+    calls, _ = deployed(tmp_path)
+    for name in ("cohortlens-api-dev", "cohortlens-web-dev"):
+        before, after = json_reads(calls, name)
+        assert before < index_of(calls, "run", "deploy", name) < after < index_of(calls, "run", "services",
+                                                                                   "update-traffic", name)
+
+
+def test_traffic_that_changed_during_the_deploy_is_not_overwritten(tmp_path):
+    """A rollback that landed while this deploy was running must not be undone when the deploy finishes."""
+    result, calls, _ = run_deploy(tmp_path, env={"FAKE_TRAFFIC_CHANGED": "1"})
+    assert result.returncode != 0 and "changed during this deploy" in result.stderr
+    assert starting(calls, "run", "services", "update-traffic") == []
+    assert starting(calls, "run", "deploy", "cohortlens-web-dev") == []
+
+
+def test_the_first_deploy_of_a_service_has_nothing_to_compare(tmp_path):
+    calls, _ = deployed(tmp_path, env={"FAKE_EXISTS": "0"})
+    assert json_reads(calls, "cohortlens-api-dev") == [] and json_reads(calls, "cohortlens-web-dev") == []
