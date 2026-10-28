@@ -6,6 +6,7 @@ import type { CohortSummary, Count, LastRun } from "./types";
 interface Props {
   onNew: () => void;
   onOpen: (id: string) => void;
+  onResults: (id: string) => void;
 }
 
 /** "2026-10-27 15:04 UTC": fixed format, so it reads the same everywhere. */
@@ -24,7 +25,7 @@ function lastRunText(run: LastRun | null | undefined): string {
   return run.status === "timeout" ? "Timed out" : "Failed";
 }
 
-export function CohortList({ onNew, onOpen }: Props) {
+export function CohortList({ onNew, onOpen, onResults }: Props) {
   const [cohorts, setCohorts] = useState<CohortSummary[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -49,7 +50,7 @@ export function CohortList({ onNew, onOpen }: Props) {
       {cohorts !== null && cohorts.length > 0 && (
         <table>
           <thead>
-            <tr><th>Name</th><th>Version</th><th>Last run</th><th>Last run time</th><th /></tr>
+            <tr><th>Name</th><th>Version</th><th>Last run</th><th>Last run time</th><th /><th /></tr>
           </thead>
           <tbody>
             {cohorts.map((cohort) => (
@@ -59,6 +60,7 @@ export function CohortList({ onNew, onOpen }: Props) {
                 <td>{lastRunText(cohort.last_run)}</td>
                 <td>{cohort.last_run ? formatTime(cohort.last_run.created_at) : "-"}</td>
                 <td><button type="button" onClick={() => onOpen(cohort.id)} aria-label={`Open ${cohort.name}`}>Open</button></td>
+                <td><button type="button" onClick={() => onResults(cohort.id)} aria-label={`Results for ${cohort.name}`}>Results</button></td>
               </tr>
             ))}
           </tbody>
