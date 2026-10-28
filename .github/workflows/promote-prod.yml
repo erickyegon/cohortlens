@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Commit sha you expect dev to be serving (leave empty to promote whatever dev serves now)"
+        description: "Full 40-character commit sha you expect dev to be serving (leave empty to promote whatever dev serves now)"
         required: false
         type: string
 
@@ -47,6 +47,8 @@ jobs:
       # untrusted text goes through the environment and is validated by promote.sh, never into the shell inline
       EXPECTED_VERSION: ${{ github.event.workflow_run.head_sha || inputs.version }}
     steps:
+      # the scripts come from the tip of main on purpose (the newest, reviewed version of the promotion logic); WHAT is
+      # promoted is decided by the digests dev serves and the commit the approver was shown, not by this checkout
       - uses: actions/checkout@v4
 
       - uses: google-github-actions/auth@v2

@@ -8,9 +8,10 @@
 # path, e.g. us-east5-docker.pkg.dev/cohortlens/cohortlens) and RUNTIME_SA (the PROD runtime service account).
 # DEPLOY_SCRIPT overrides the deploy script (tests only).
 #
-# It builds nothing and looks nothing up by tag (tags can be moved). It reads the images the DEV services are serving
-# right now, which were deployed by digest and passed the dev smoke test, checks that both are digest-pinned images of
-# this project's registry, asks the dev API which commit it is running, and hands exactly those digests to
+# It builds nothing and looks nothing up by tag (tags can be moved). It reads the images of the revisions that SERVE
+# the DEV services right now (all traffic on one revision; never the newest, possibly untested, template). Those
+# were deployed by digest and passed the dev smoke test. It checks that both are digest-pinned images of this
+# project's registry, asks the dev API which commit it is running, and hands exactly those digests to
 # infra/gcp/deploy.sh for prod: a no-traffic candidate, a smoke test on its tagged URL, and only then traffic.
 # --expect-version is the commit the approver was shown; if dev has moved on to another commit since, it refuses.
 # It changes nothing in dev and deletes nothing.
@@ -31,7 +32,7 @@ done
 refuse() { echo "error: $*" >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 
-[[ -z "$EXPECTED" || "$EXPECTED" =~ ^[0-9a-f]{7,40}$ ]] || refuse "--expect-version must be a git commit sha"
+[[ -z "$EXPECTED" || "$EXPECTED" =~ ^[0-9a-f]{40}$ ]] || refuse "--expect-version must be the full 40-character git commit sha"
 PROJECT_ID="${PROJECT_ID-}"; REGION="${REGION-}"; REGISTRY="${REGISTRY-}"; RUNTIME_SA="${RUNTIME_SA-}"
 [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || refuse "invalid or missing PROJECT_ID"
 [[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || refuse "invalid or missing REGION"
@@ -44,13 +45,33 @@ DEPLOY="${DEPLOY_SCRIPT:-$(dirname "$0")/deploy.sh}"
 TARGET=(--region="$REGION" --project="$PROJECT_ID")
 ESCAPED_REGISTRY="${REGISTRY//./\\.}"
 
-# dev_image SERVICE KIND: the image a dev service serves, which must be KIND's image, pinned by digest, in our registry
+PYTHON="$(command -v python3 || command -v python || true)"
+[ -n "$PYTHON" ] || die "python is required to read the traffic of the dev services"
+
+# serving_revision SERVICE: the ONE revision that holds all the traffic of a dev service right now. The service's
+# newest template is not good enough: after a dev deploy whose smoke test failed, the newest revision is an untested
+# candidate with no traffic while the old one still serves. Anything but exactly one revision at 100% is refused.
+serving_revision() {
+  local service="$1" json
+  json="$(gcloud run services describe "$service" "${TARGET[@]}" --format=json)" || die "could not read ${service}"
+  printf '%s' "$json" | "$PYTHON" -c '
+import json, sys
+try:
+    live = [t for t in json.load(sys.stdin)["status"]["traffic"] if t.get("percent", 0) > 0]
+    assert len(live) == 1 and live[0]["percent"] == 100 and live[0]["revisionName"]
+    print(live[0]["revisionName"])
+except Exception:
+    sys.exit(1)
+' || die "${service} does not have exactly one revision serving all its traffic; nothing was promoted"
+}
+
+# dev_image SERVICE KIND: the image of the revision serving that dev service, which must be KIND's image, pinned by
+# digest, in our registry
 dev_image() {
-  local service="$1" kind="$2" image
-  image="$(gcloud run services describe "$service" "${TARGET[@]}" --format='value(spec.template.spec.containers[0].image)')" \
-    || die "could not read the image of ${service}"
-  [[ "$image" =~ ^${ESCAPED_REGISTRY}/${kind}@sha256:[0-9a-f]{64}$ ]] \
-    || die "${service} is not serving a digest-pinned ${kind} image of ${REGISTRY} (found: '${image}'); nothing was promoted"
+  local service="$1" kind="$2" revision image
+  revision="$(serving_revision "$service")" || exit 1
+  image="$(gcloud run revisions describe "$revision" "${TARGET[@]}" --format='value(spec.containers[0].image)')"     || die "could not read the image of ${revision}"
+  [[ "$image" =~ ^${ESCAPED_REGISTRY}/${kind}@sha256:[0-9a-f]{64}$ ]]     || die "${revision} (serving ${service}) is not a digest-pinned ${kind} image of ${REGISTRY} (found: '${image}'); nothing was promoted"
   echo "$image"
 }
 

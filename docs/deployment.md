@@ -57,16 +57,18 @@ The web container renders its nginx config at start from `API_UPSTREAM` and `API
 
 ## Prod promotion (`.github/workflows/promote-prod.yml`, `infra/gcp/promote.sh`)
 
-After a successful dev deploy (or by hand: **Actions → Promote to prod → Run workflow**, optionally with the commit you expect dev to serve), the workflow **pauses** because its job runs in the `production` environment. Nothing happens until the required reviewer approves, and only a job of that environment can impersonate the prod deploy account.
+After a successful dev deploy (or by hand: **Actions → Promote to prod → Run workflow**, optionally with the full 40-character commit sha you expect dev to serve), the workflow **pauses** because its job runs in the `production` environment. Nothing happens until the required reviewer approves, and only a job of that environment can impersonate the prod deploy account.
 
 **To approve (browser):** GitHub → the repository → **Actions** → the **Promote to prod** run that says *Waiting* → **Review deployments** → tick **production** → optionally leave a comment → **Approve and deploy**. Choose **Reject** to stop it. The run page shows the commit the promotion was started for.
 
 After approval, `promote.sh` does this and nothing else:
-1. reads the images the **dev services are serving right now** (they were deployed by digest and passed the dev smoke test) and refuses unless both are digest-pinned images of this project's registry. It never looks anything up by tag, because a tag can be moved;
+1. reads the images of the **revisions that serve the dev services right now** (the one revision holding all the traffic, deployed by digest, which passed the dev smoke test; never the newest template, which after a failed dev deploy is an untested candidate) and refuses unless both are digest-pinned images of this project's registry. It never looks anything up by tag, because a tag can be moved;
 2. asks the dev API which commit it runs (`/healthz`) and refuses if that is not the commit the approver was shown (dev moved on: start a new promotion);
 3. calls `deploy.sh --env prod` with **those same digests**: the migration job on the prod database first, then each service as a `--no-traffic` revision tagged `candidate`, a smoke test on its tagged URL, and only then the traffic move. A failed smoke test leaves traffic where it was and fails the run.
 
-The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. Rollback by traffic shift is a separate workflow (#19).
+The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. **If the web smoke test fails after the API went live**, prod runs the new API with the old web (the API is deployed and promoted first). Migrations are expand-then-contract, so the old web keeps working against the new API; fix forward or roll the API back (#19).
+
+Rollback by traffic shift is a separate workflow (#19).
 
 **Not possible yet:** the prod Neon branch has no roles, schema or seed and the two prod secrets have no value: `make seed-cloud` supports `dev` only. Until prod is prepared (a deliberate, separately approved step), a promotion will fail at the prod migration, before any revision exists. Nothing here has run against a real project.
 
