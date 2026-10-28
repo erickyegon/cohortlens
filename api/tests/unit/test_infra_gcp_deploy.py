@@ -174,7 +174,8 @@ def test_each_candidate_is_smoke_tested_on_its_tagged_url_before_traffic_moves(t
     calls, smokes = deployed(tmp_path)
     assert [s[0] for s in smokes] == ["https://candidate---cohortlens-api-dev-abc123-ul.a.run.app",
                                       "https://candidate---cohortlens-web-dev-abc123-ul.a.run.app"]
-    assert smokes[1][1:] == ["--api-prefix", "/api"]  # the web smoke goes through the nginx proxy
+    assert smokes[0][1:] == ["--expect-version", SHA]  # the candidate must be running the version being deployed
+    assert smokes[1][1:] == ["--api-prefix", "/api", "--expect-version", SHA]  # the web smoke goes through nginx
 
 
 def test_a_failed_smoke_test_of_the_api_candidate_moves_no_traffic_and_deploys_no_web(tmp_path):

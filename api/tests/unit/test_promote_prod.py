@@ -150,7 +150,7 @@ def test_the_images_come_from_the_dev_services_not_from_a_tag_lookup(tmp_path):
 
 def test_the_version_is_what_the_dev_api_reports(tmp_path):
     read = promoted(tmp_path)
-    assert read["curl"] and "https://cohortlens-api-dev-abc123-ul.a.run.app/healthz" in read["curl"][0]
+    assert read["curl"] and "https://cohortlens-api-dev-abc123-ul.a.run.app/version" in read["curl"][0]
 
 
 def test_the_expected_version_the_approver_was_shown_must_match(tmp_path):
@@ -230,7 +230,7 @@ def test_it_never_changes_dev_deletes_or_touches_iam(tmp_path):
 
 def test_a_failed_candidate_in_dev_never_reaches_prod_the_serving_image_does(tmp_path):
     # a later dev deploy failed its smoke test: the newest revision (and its image) is a tagged candidate with no
-    # traffic, while the old revision still serves 100% and /healthz still reports the old version
+    # traffic, while the old revision still serves 100% and /version still reports the old version
     pending = traffic({"percent": 100, "revisionName": API_SERVING},
                       {"revisionName": API_CANDIDATE, "tag": "candidate", "url": "https://candidate---x.a.run.app"})
     read = promoted(tmp_path, env={"FAKE_API_TRAFFIC": pending})
