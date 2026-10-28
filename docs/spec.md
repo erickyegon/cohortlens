@@ -59,7 +59,7 @@ All data is synthetic. No real patient information ever exists in the system.
 | FR-10 | Any count from 1 to 10 is returned as `"<11"`. Zero stays `0`. | US-8 |
 | FR-11 | No endpoint returns patient-level rows. | US-8 |
 | FR-12 | Every response carries an `X-Trace-Id` header; failed runs show "Something went wrong. Reference: <trace id>". | US-9 |
-| FR-13 | `GET /healthz` (liveness) and `GET /readyz` (readiness incl. database check). | US-10 |
+| FR-13 | `GET /healthz` (liveness), `GET /readyz` (readiness incl. database check) and `GET /version` (the commit the revision runs; Cloud Run reserves `/healthz` on its public URL, so deploy checks use `/version`). | US-10 |
 | FR-14 | Queries are cancelled after a 10 s statement timeout. | US-4 |
 | FR-15 | The UI provides a cohort list, a builder (with reorderable rules) and a results screen with waterfall chart, baseline table and run history. | US-2, US-4–7 |
 | FR-16 | Alert rules on run error rate and p95 latency route prod incidents to the on-call agent. | US-10, US-11 |

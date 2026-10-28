@@ -5,10 +5,13 @@
 #   export NEON_DEV_URL='postgresql://neondb_owner:...@ep-xxxx.region.aws.neon.tech/neondb?sslmode=require'
 #   make seed-cloud ARGS="--confirm-endpoint ep-xxxx"        (or: bash scripts/seed_cloud.sh --env dev --confirm-endpoint ep-xxxx)
 #
-# NEON_DEV_URL is the DIRECT (not pooled) connection string of the owner role on the `dev` branch. It is read from the
+# NEON_DEV_URL (NEON_PROD_URL for --env prod) is the DIRECT (not pooled) connection string of the owner role on the
+# `dev` (`prod`) branch. It is read from the
 # environment only; it is never printed and never put on a command line (psql gets it through libpq variables).
 # --confirm-endpoint must be the endpoint id (ep-...) of the branch you mean, so a production URL pasted by mistake is
-# refused. Use the connection string exactly as Neon gives it. Settings: PROJECT_ID (default cohortlens). Needs gcloud
+# refused. For --env prod you must also pass --yes-this-is-production, dev must already have been prepared, and the
+# endpoint must differ from the one dev uses (read from dev's stored secret, never printed). Use the connection string
+# exactly as Neon gives it. Settings: PROJECT_ID (default cohortlens). Needs gcloud
 # signed in, and psql or Docker. Never run it with `bash -x` (that would print the passwords).
 #
 # What it does, in this order, and only this:
@@ -18,12 +21,12 @@
 #   3. applies db/init/20-grants.sql (the same grants as the local stack; idempotent) and checks the person count.
 # Safe to run twice: existing roles keep their passwords and secrets, existing data is never reloaded.
 # --rotate-passwords sets new passwords on the existing roles and writes new secret versions. Nothing is ever dropped,
-# truncated or deleted. Prod is a separate, deliberate step and is not supported here.
+# truncated or deleted.
 set -euo pipefail
 export LC_ALL=C
 cd "$(dirname "$0")/.."
 
-ENVIRONMENT="" CONFIRM="" ROTATE=0
+ENVIRONMENT="" CONFIRM="" ROTATE=0 PROD_OK=0
 while (( $# )); do
   case "$1" in
     --env | --confirm-endpoint)
@@ -31,7 +34,8 @@ while (( $# )); do
       if [ "$1" = "--env" ]; then ENVIRONMENT="$2"; else CONFIRM="$2"; fi
       shift 2 ;;
     --rotate-passwords) ROTATE=1; shift ;;
-    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
+    --yes-this-is-production) PROD_OK=1; shift ;;
+    -h | --help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1'" >&2; exit 2 ;;
   esac
 done
@@ -39,21 +43,28 @@ done
 refuse() { echo "error: $*" >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 
-[ "$ENVIRONMENT" = "dev" ] || refuse "--env must be 'dev' (prod is a separate, deliberate step)"
+[ "$ENVIRONMENT" = "dev" ] || [ "$ENVIRONMENT" = "prod" ] || refuse "--env must be 'dev' or 'prod'"
+if [ "$ENVIRONMENT" = "prod" ]; then
+  (( PROD_OK )) || refuse "--env prod changes PRODUCTION: add --yes-this-is-production to say you mean it"
+  URL_VAR=NEON_PROD_URL OTHER=dev
+else
+  (( ! PROD_OK )) || refuse "--yes-this-is-production only goes with --env prod"
+  URL_VAR=NEON_DEV_URL OTHER=prod
+fi
 [[ "$CONFIRM" =~ ^ep-[a-z0-9-]+$ ]] || refuse "--confirm-endpoint ep-... is required: the endpoint id of the Neon branch you mean"
 PROJECT_ID="${PROJECT_ID-cohortlens}"
 [[ "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || refuse "invalid PROJECT_ID"
 
-URL="${NEON_DEV_URL-}"
+URL="${!URL_VAR-}"
 URL_PATTERN='^postgres(ql)?://([^:@/]+):([^@/]+)@([a-z0-9.-]+)(:([0-9]+))?/([A-Za-z0-9_-]+)\?(.*)$'
-[[ "$URL" =~ $URL_PATTERN ]] || refuse "NEON_DEV_URL is missing or not a postgresql:// URL with a password, host, database and ?sslmode=require"
+[[ "$URL" =~ $URL_PATTERN ]] || refuse "${URL_VAR} is missing or not a postgresql:// URL with a password, host, database and ?sslmode=require"
 OWNER="${BASH_REMATCH[2]}" OWNER_PASSWORD="${BASH_REMATCH[3]}" DB_HOST="${BASH_REMATCH[4]}" DB_PORT="${BASH_REMATCH[6]}"
 DB_NAME="${BASH_REMATCH[7]}" QUERY="${BASH_REMATCH[8]}"
 URL=""
-[[ "&${QUERY}&" == *"&sslmode=require&"* ]] || refuse "NEON_DEV_URL must contain sslmode=require"
-[[ "$DB_HOST" == *.neon.tech ]] || refuse "NEON_DEV_URL must be the connection string Neon gives you (host ending in .neon.tech)"
-[[ "$DB_HOST" != *-pooler* ]] || refuse "NEON_DEV_URL is a pooled connection; use the direct one (untick 'Connection pooling' in the Neon console)"
-[ "${DB_HOST%%.*}" = "$CONFIRM" ] || refuse "the endpoint in NEON_DEV_URL (${DB_HOST%%.*}) is not the one you confirmed (${CONFIRM}); nothing was touched"
+[[ "&${QUERY}&" == *"&sslmode=require&"* ]] || refuse "${URL_VAR} must contain sslmode=require"
+[[ "$DB_HOST" == *.neon.tech ]] || refuse "${URL_VAR} must be the connection string Neon gives you (host ending in .neon.tech)"
+[[ "$DB_HOST" != *-pooler* ]] || refuse "${URL_VAR} is a pooled connection; use the direct one (untick 'Connection pooling' in the Neon console)"
+[ "${DB_HOST%%.*}" = "$CONFIRM" ] || refuse "the endpoint in ${URL_VAR} (${DB_HOST%%.*}) is not the one you confirmed (${CONFIRM}); nothing was touched"
 
 export PGHOST="$DB_HOST" PGUSER="$OWNER" PGPASSWORD="$OWNER_PASSWORD" PGDATABASE="$DB_NAME" PGSSLMODE=require
 [ -z "$DB_PORT" ] || export PGPORT="$DB_PORT"
@@ -72,6 +83,28 @@ secret_name() { echo "cohortlens-${ENVIRONMENT}-database-url-$1"; }
 heading() { echo; echo "== $*"; }
 
 echo "CohortLens Neon setup: ${ENVIRONMENT}   endpoint ${CONFIRM}   database ${DB_NAME}   project ${PROJECT_ID}"
+
+# The two environments must be two different Neon endpoints. The other environment's stored database URL (read from
+# Secret Manager, compared and never printed) must not point at the endpoint about to be changed, which catches the
+# classic mistake of pasting the wrong branch's string. Prod also requires dev to have been prepared first.
+heading "guard: this endpoint must not be the one ${OTHER} uses"
+other_secret="cohortlens-${OTHER}-database-url-app"
+other_has="$(gcloud secrets versions list "$other_secret" --filter='state=enabled' --limit=1 --format='value(name)' --project="$PROJECT_ID")" \
+  || die "could not check whether ${OTHER} has been prepared (${other_secret})"
+if [ -n "$other_has" ]; then
+  other_url="$(gcloud secrets versions access latest --secret="$other_secret" --project="$PROJECT_ID")" \
+    || die "could not read ${other_secret}; not touching the database without the check"
+  other_host=""
+  [[ "$other_url" =~ @([a-z0-9.-]+)(:[0-9]+)?/ ]] && other_host="${BASH_REMATCH[1]}"
+  other_url=""
+  [ -n "$other_host" ] || die "${other_secret} does not hold a database URL I can read; not touching the database without the check"
+  [ "${other_host%%.*}" != "$CONFIRM" ] || die "this endpoint (${CONFIRM}) is the one ${OTHER} already uses; ${ENVIRONMENT} must be a different Neon branch. Nothing was touched"
+  echo "  ${OTHER} uses a different endpoint: ok"
+elif [ "$ENVIRONMENT" = "prod" ]; then
+  die "dev has not been prepared yet (${other_secret} has no value); prepare dev first. Nothing was touched"
+else
+  echo "  prod has not been prepared yet: nothing to compare with"
+fi
 
 heading "state"
 roles_existing="$(query "select count(*) from pg_roles where rolname in ('cohortlens_app', 'cohortlens_reader')")"
@@ -130,4 +163,8 @@ final="$(query "select count(*) from cdm.person")"
 [ "$final" = "5724" ] || die "cdm.person has ${final} rows, expected 5724"
 echo "  cdm.person: ${final}"
 echo
-echo "DONE: ${ENVIRONMENT} is ready. Next: set the GCP_PROJECT_ID repository variable to switch the dev deploy on."
+if [ "$ENVIRONMENT" = "dev" ]; then
+  echo "DONE: dev is ready. Next: set the GCP_PROJECT_ID repository variable to switch the dev deploy on."
+else
+  echo "DONE: prod is ready (roles, schema, seed and both prod secrets). A promotion can now run its prod migration."
+fi
