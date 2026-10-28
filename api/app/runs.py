@@ -12,11 +12,13 @@ import uuid
 from dataclasses import asdict, dataclass
 
 from fastapi import APIRouter, Request
+from opentelemetry.trace import Status, StatusCode
 from sqlalchemy import insert, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.concurrency import run_in_threadpool
 
+from app import telemetry
 from app.cohort_engine.attrition import CohortTimeout, run_attrition
 from app.cohort_engine.baseline import PublicBaseline, run_baseline, suppress_baseline
 from app.cohort_engine.compiler import build_plan
@@ -45,14 +47,24 @@ class RunOutcome:
         return self.steps[-1].persons
 
 
+def _span(name: str):
+    """A child span of the current one. Exceptions are neither recorded nor turned into a status description: an
+    exception message can carry SQL or data (the allowlist would drop it anyway; this keeps it from being created)."""
+    return telemetry.get_tracer().start_as_current_span(name, record_exception=False, set_status_on_exception=False)
+
+
 def execute_run(definition: CohortDefinition, timeout_ms: int) -> RunOutcome:
     """Compile, count every step and the baseline on the READER connection, and suppress. Raises `CohortTimeout` when
     the database cancels a statement; connection failures propagate as SQLAlchemy errors."""
-    plan = build_plan(definition)
+    with _span("compile"):
+        plan = build_plan(definition)
     with reader_engine().connect() as conn:
-        exact_steps = run_attrition(conn, plan, timeout_ms)
-        exact_baseline = run_baseline(conn, plan, timeout_ms)
-    return RunOutcome(steps=suppress_steps(exact_steps), baseline=suppress_baseline(exact_baseline))
+        with _span("execute"):
+            exact_steps = run_attrition(conn, plan, timeout_ms)
+        with _span("baseline"):
+            exact_baseline = run_baseline(conn, plan, timeout_ms)
+    with _span("suppress"):
+        return RunOutcome(steps=suppress_steps(exact_steps), baseline=suppress_baseline(exact_baseline))
 
 
 def timeout_message(timeout_ms: int) -> str:
@@ -125,30 +137,46 @@ async def run_cohort(cohort_id: str, request: Request):
         return error_response(request, 404, "Cohort not found")
     trace_id = trace_id_of(request)
     started = time.perf_counter()
+    with telemetry.get_tracer().start_as_current_span("cohort.run", record_exception=False,
+                                                      set_status_on_exception=False) as run_span:
+        response, outcome = await _run_and_record(request, parsed, row, trace_id, started, run_span)
+        run_span.set_attribute("cohortlens.outcome", outcome)
+        if outcome != "success":
+            run_span.set_status(Status(StatusCode.ERROR))
+        telemetry.record_run(outcome, time.perf_counter() - started)
+        logger.info("run finished outcome=%s duration_ms=%d", outcome, _elapsed_ms(started))
+        return response
 
+
+async def _run_and_record(request: Request, parsed, row, trace_id: str, started: float, run_span):
+    """The run itself and its record; returns the response and the outcome (`success`, `failed` or `timeout`)."""
     try:
-        definition = parse_definition(row.definition)
+        with _span("validate"):
+            definition = parse_definition(row.definition)
     except DefinitionError as error:
         await run_in_threadpool(_record, parsed, "failed", trace_id, _elapsed_ms(started), None)
         return error_response(request, 422, "The saved cohort no longer passes validation. Edit it and save it again.",
-                              error.errors)
+                              error.errors), "failed"
+    run_span.set_attribute("cohortlens.rule_count", len(definition.rules))
 
     try:
         outcome = await run_in_threadpool(execute_run, definition, RUN_TIMEOUT_MS)
     except CohortTimeout as exc:
         logger.warning("run timed out exception=%s trace_id=%s", type(exc).__name__, trace_id)
         recorded = await run_in_threadpool(_record, parsed, "timeout", trace_id, _elapsed_ms(started), None)
-        return error_response(request, 504, timeout_message(RUN_TIMEOUT_MS), extra=_run_ref(recorded))
+        return error_response(request, 504, timeout_message(RUN_TIMEOUT_MS), extra=_run_ref(recorded)), "timeout"
     except Exception as exc:  # noqa: BLE001 - every failure is recorded and answered with the trace reference
         recorded = await run_in_threadpool(_record, parsed, "failed", trace_id, _elapsed_ms(started), None)
         if isinstance(exc, (DBAPIError, PoolTimeout)):  # connection-level: 503; anything else a plain 500
             return database_error_response(request, exc, extra=_run_ref(recorded),
-                                           fallback_message="Something went wrong running this cohort.")
+                                           fallback_message="Something went wrong running this cohort."), "failed"
         log_failure(request, exc)
-        return error_response(request, 500, "Something went wrong running this cohort.", extra=_run_ref(recorded))
+        return error_response(request, 500, "Something went wrong running this cohort.",
+                              extra=_run_ref(recorded)), "failed"
 
     recorded = await run_in_threadpool(_record, parsed, "success", trace_id, _elapsed_ms(started), outcome.steps)
-    return _run_json(recorded, outcome.baseline)
+    run_span.set_attribute("cohortlens.step_count", len(outcome.steps))
+    return _run_json(recorded, outcome.baseline), "success"
 
 
 def _run_ref(recorded) -> dict:

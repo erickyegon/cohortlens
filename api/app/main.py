@@ -1,6 +1,5 @@
 """CohortLens API: health endpoints, the X-Trace-Id header, cohort CRUD, runs and concept search."""
 import os
-import secrets
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -9,6 +8,7 @@ from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app import telemetry
 from app.cohorts import router as cohorts_router
 from app.concepts import router as concepts_router
 from app.db.session import app_engine, reader_engine
@@ -16,6 +16,7 @@ from app.errors import database_error_response, error_response, log_failure
 from app.runs import router as runs_router
 
 SERVICE_VERSION = os.environ.get("SERVICE_VERSION", "dev")
+telemetry.configure_from_environment()
 
 app = FastAPI(title="CohortLens API", version=SERVICE_VERSION)
 app.include_router(cohorts_router)
@@ -25,16 +26,23 @@ app.include_router(runs_router)
 
 @app.middleware("http")
 async def trace_header(request: Request, call_next):
-    # Replaced by the OpenTelemetry trace id when telemetry lands (issue: OTel traces, metrics and logs).
-    trace_id = secrets.token_hex(16)
-    request.state.trace_id = trace_id
-    try:
-        response: Response = await call_next(request)
-    except Exception as exc:  # unhandled errors still carry the reference the user quotes, and leave a log line
-        log_failure(request, exc)
-        response = JSONResponse({"error": "Internal Server Error", "trace_id": trace_id}, status_code=500)
-    response.headers["X-Trace-Id"] = trace_id
-    return response
+    """Every request is one trace: the root span's trace id is the `X-Trace-Id` the user is given and the id every log
+    line, child span and stored run carries (FR-12). Only the method, the route TEMPLATE and the status are recorded."""
+    with telemetry.get_tracer().start_as_current_span("http.request") as span:
+        trace_id = format(span.get_span_context().trace_id, "032x")
+        request.state.trace_id = trace_id
+        span.set_attribute("http.request.method", request.method)
+        try:
+            response: Response = await call_next(request)
+        except Exception as exc:  # unhandled errors still carry the reference the user quotes, and leave a log line
+            log_failure(request, exc)
+            response = JSONResponse({"error": "Internal Server Error", "trace_id": trace_id}, status_code=500)
+        route = request.scope.get("route")
+        if route is not None:
+            span.set_attribute("http.route", route.path)
+        span.set_attribute("http.response.status_code", response.status_code)
+        response.headers["X-Trace-Id"] = trace_id
+        return response
 
 
 @app.exception_handler(OperationalError)

@@ -48,7 +48,12 @@ services:
       context: ./api
       args:
         SERVICE_VERSION: ${SERVICE_VERSION:-dev}
-    environment: *db-env
+    environment:
+      <<: *db-env
+      DEPLOYMENT_ENVIRONMENT: ${DEPLOYMENT_ENVIRONMENT:-local}
+      # locally the lgtm container below; set both to a Grafana Cloud OTLP endpoint and header to export there instead
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://lgtm:4318}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:

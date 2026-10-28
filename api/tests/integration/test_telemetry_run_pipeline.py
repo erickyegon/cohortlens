@@ -124,9 +124,7 @@ def test_a_log_line_for_the_run_carries_the_same_trace_id_as_the_spans(client, w
 
 
 def test_a_run_is_counted_and_timed_with_outcome_environment_and_revision(client, wired, monkeypatch):
-    monkeypatch.setenv("DEPLOYMENT_ENVIRONMENT", "test")
-    telemetry.configure(span_exporter=wired.spans, metric_readers=[wired.reader], log_exporter=wired.logs,
-                        log_stream=wired.stream)
+    monkeypatch.setenv("DEPLOYMENT_ENVIRONMENT", "test")  # read when a run is recorded, so no reconfiguring is needed
     client.post(f"/cohorts/{save(client)}/runs")
     (counter,) = wired.metric_points("cohortlens_cohort_runs_total")
     assert counter.value == 1 and set(counter.attributes) == {"outcome", "environment", "revision"}
@@ -196,7 +194,7 @@ def test_the_telemetry_does_not_break_a_run_when_the_exporter_fails(client, wire
         def force_flush(self, *_args, **_kwargs):
             return True
 
-    telemetry.configure(span_exporter=Broken(), metric_readers=[wired.reader], log_stream=wired.stream)
+    telemetry.configure(span_exporter=Broken(), metric_readers=[InMemoryMetricReader()], log_stream=wired.stream)
     response = client.post(f"/cohorts/{save(client)}/runs")
     assert response.status_code == 201 and response.json()["status"] == "success"
     logging.getLogger("cohortlens.api").info("still logging")
