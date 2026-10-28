@@ -63,17 +63,17 @@ exit 0
 """
 
 
-def _install(directory, name, body):
+def _install(directory, name, body, executable=True):
     path = directory / name
     path.write_text(body, encoding="utf-8", newline="\n")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC if executable else 0o644)
 
 
 def run_deploy(tmp_path, *, env=None, args=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _install(bin_dir, "gcloud", FAKE_GCLOUD)
-    _install(bin_dir, "smoke", FAKE_SMOKE)
+    _install(bin_dir, "smoke", FAKE_SMOKE, executable=False)  # git stores our scripts as mode 100644
     log, smoke_log = tmp_path / "gcloud.log", tmp_path / "smoke.log"
     log.write_text("", encoding="utf-8")
     smoke_log.write_text("", encoding="utf-8")
@@ -174,7 +174,8 @@ def test_each_candidate_is_smoke_tested_on_its_tagged_url_before_traffic_moves(t
     calls, smokes = deployed(tmp_path)
     assert [s[0] for s in smokes] == ["https://candidate---cohortlens-api-dev-abc123-ul.a.run.app",
                                       "https://candidate---cohortlens-web-dev-abc123-ul.a.run.app"]
-    assert smokes[1][1:] == ["--api-prefix", "/api"]  # the web smoke goes through the nginx proxy
+    assert smokes[0][1:] == ["--expect-version", SHA]  # the candidate must be running the version being deployed
+    assert smokes[1][1:] == ["--api-prefix", "/api", "--expect-version", SHA]  # the web smoke goes through nginx
 
 
 def test_a_failed_smoke_test_of_the_api_candidate_moves_no_traffic_and_deploys_no_web(tmp_path):
@@ -318,3 +319,11 @@ def test_prod_refuses_the_dev_runtime_account(tmp_path):
 def test_dev_refuses_the_prod_runtime_account(tmp_path):
     result, calls, _ = run_deploy(tmp_path, env=PROD_ENV)  # --env dev with the prod account
     assert result.returncode != 0 and calls == []
+
+
+def test_the_smoke_script_is_run_through_bash_because_git_stores_it_as_mode_100644():
+    """The first real dev deploy failed with `smoke_cloud.sh: Permission denied`: the scripts are not executable in git
+    and the deploy called the smoke script directly. Windows hides this (every file runs), Linux does not."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'bash "$SMOKE"' in text
+    assert not [line for line in text.splitlines() if line.strip().startswith('"$SMOKE"')]

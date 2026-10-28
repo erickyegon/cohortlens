@@ -82,10 +82,10 @@ exit 0
 """
 
 
-def _install(directory, name, body):
+def _install(directory, name, body, executable=True):
     path = directory / name
     path.write_text(body, encoding="utf-8", newline="\n")
-    path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    path.chmod(path.stat().st_mode | stat.S_IEXEC if executable else 0o644)
 
 
 def run_promote(tmp_path, *args, env=None):
@@ -93,7 +93,7 @@ def run_promote(tmp_path, *args, env=None):
     bin_dir.mkdir(exist_ok=True)
     _install(bin_dir, "gcloud", FAKE_GCLOUD)
     _install(bin_dir, "curl", FAKE_CURL)
-    _install(bin_dir, "deploy", FAKE_DEPLOY)
+    _install(bin_dir, "deploy", FAKE_DEPLOY, executable=False)  # git stores our scripts as mode 100644
     logs = {name: tmp_path / f"{name}.log" for name in ("gcloud", "curl", "deploy")}
     for log in logs.values():
         log.write_text("", encoding="utf-8")
@@ -150,7 +150,7 @@ def test_the_images_come_from_the_dev_services_not_from_a_tag_lookup(tmp_path):
 
 def test_the_version_is_what_the_dev_api_reports(tmp_path):
     read = promoted(tmp_path)
-    assert read["curl"] and "https://cohortlens-api-dev-abc123-ul.a.run.app/healthz" in read["curl"][0]
+    assert read["curl"] and "https://cohortlens-api-dev-abc123-ul.a.run.app/version" in read["curl"][0]
 
 
 def test_the_expected_version_the_approver_was_shown_must_match(tmp_path):
@@ -230,7 +230,7 @@ def test_it_never_changes_dev_deletes_or_touches_iam(tmp_path):
 
 def test_a_failed_candidate_in_dev_never_reaches_prod_the_serving_image_does(tmp_path):
     # a later dev deploy failed its smoke test: the newest revision (and its image) is a tagged candidate with no
-    # traffic, while the old revision still serves 100% and /healthz still reports the old version
+    # traffic, while the old revision still serves 100% and /version still reports the old version
     pending = traffic({"percent": 100, "revisionName": API_SERVING},
                       {"revisionName": API_CANDIDATE, "tag": "candidate", "url": "https://candidate---x.a.run.app"})
     read = promoted(tmp_path, env={"FAKE_API_TRAFFIC": pending})
@@ -256,3 +256,11 @@ def test_the_web_service_is_resolved_the_same_way(tmp_path):
     split = traffic({"percent": 60, "revisionName": WEB_SERVING}, {"percent": 40, "revisionName": other})
     result, read = run_promote(tmp_path, env={"FAKE_WEB_TRAFFIC": split})
     assert result.returncode != 0 and deploy_call(read) is None
+
+
+def test_the_deploy_script_is_run_through_bash_because_git_stores_it_as_mode_100644():
+    """Same lesson as the dev deploy (`Permission denied` on the first real run): never execute a repository script
+    directly. Windows hides this (every file runs), Linux does not."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'bash "$DEPLOY"' in text
+    assert not [line for line in text.splitlines() if line.strip().startswith('"$DEPLOY"')]

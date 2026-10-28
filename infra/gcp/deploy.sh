@@ -91,7 +91,7 @@ deploy_service() {
     heading "${name}: first deploy (nothing is serving yet, so it goes live directly)"
     gcloud run deploy "$name" "${flags[@]}" "${TARGET[@]}"
     url="$(service_url "$name")"
-    "$SMOKE" "$url" "${smoke_args[@]}" || die "smoke test failed on the first deploy of ${name}"
+    bash "$SMOKE" "$url" "${smoke_args[@]}" || die "smoke test failed on the first deploy of ${name}"
     return 0
   fi
 
@@ -100,7 +100,7 @@ deploy_service() {
   url="$(service_url "$name")"
   candidate_url="${url/https:\/\//https:\/\/candidate---}"
   heading "${name}: smoke test on ${candidate_url}"
-  "$SMOKE" "$candidate_url" "${smoke_args[@]}" || die "smoke test failed on the candidate of ${name}; traffic was NOT moved"
+  bash "$SMOKE" "$candidate_url" "${smoke_args[@]}" || die "smoke test failed on the candidate of ${name}; traffic was NOT moved"
   heading "${name}: move traffic to the new revision"
   gcloud run services update-traffic "$name" --to-latest --remove-tags=candidate "${TARGET[@]}"
 }
@@ -113,13 +113,13 @@ gcloud run jobs deploy "$JOB" --image="$API_IMAGE" --service-account="$RUNTIME_S
   --max-retries=0 --task-timeout=300s "${TARGET[@]}"
 gcloud run jobs execute "$JOB" --wait "${TARGET[@]}"
 
-deploy_service "$API" -- --image="$API_IMAGE" --service-account="$RUNTIME_SA" --port=8000 --allow-unauthenticated \
+deploy_service "$API" --expect-version "$VERSION" -- --image="$API_IMAGE" --service-account="$RUNTIME_SA" --port=8000 --allow-unauthenticated \
   --set-secrets="DATABASE_URL_APP=${APP_SECRET}:latest,DATABASE_URL_READER=${READER_SECRET}:latest" \
   --set-env-vars="SERVICE_VERSION=${VERSION},DEPLOYMENT_ENVIRONMENT=${ENVIRONMENT}"
 
 API_URL="$(service_url "$API")"
 API_HOST="${API_URL#https://}"
-deploy_service "$WEB" --api-prefix /api -- --image="$WEB_IMAGE" --service-account="$RUNTIME_SA" --port=8080 \
+deploy_service "$WEB" --api-prefix /api --expect-version "$VERSION" -- --image="$WEB_IMAGE" --service-account="$RUNTIME_SA" --port=8080 \
   --allow-unauthenticated \
   --set-env-vars="API_UPSTREAM=${API_URL},API_HOST=${API_HOST},NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1"
 

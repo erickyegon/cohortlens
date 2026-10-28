@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(BASH is None, reason="bash is required to run th
 
 SEP = "\x1f"
 COHORT_ID = "6f1c1f0e-5b1c-4d55-9a0e-0a5f4c2b9a11"
+SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98"
 BASE = "https://candidate---cohortlens-api-dev-abc123-ul.a.run.app"
 
 FAKE_CURL = r"""#!/usr/bin/env bash
@@ -54,7 +56,7 @@ def scenario(tmp_path, overrides=None):
     run = {"id": "r1", "cohort_id": COHORT_ID, "status": "success", "final_count": 481,
            "step_counts": [{"key": "index", "label": "Index", "persons": 920}]}
     files = {
-        "GET__healthz": (200, {"status": "ok", "version": "abc"}),
+        "GET__version": (200, {"version": SHA}),
         "GET__readyz": (200, {"status": "ready", "cdm_persons": 5724}),
         "POST__cohorts": (201, {"id": COHORT_ID, "name": "smoke"}),
         f"POST__cohorts_{COHORT_ID}_runs": (201, run),
@@ -63,7 +65,7 @@ def scenario(tmp_path, overrides=None):
         "POST__api_cohorts": (201, {"id": COHORT_ID, "name": "smoke"}),
         f"POST__api_cohorts_{COHORT_ID}_runs": (201, run),
         f"DELETE__api_cohorts_{COHORT_ID}": (204, ""),
-        "GET__api_healthz": (200, {"status": "ok"}),
+        "GET__api_version": (200, {"version": SHA}),
     }
     for name, value in (overrides or {}).items():
         if value is None:
@@ -107,7 +109,7 @@ def test_the_script_exists_and_is_valid_bash_with_strict_mode():
 def test_a_healthy_deployment_passes_and_runs_one_real_cohort_then_cleans_up(tmp_path):
     result, calls = run_smoke(tmp_path, BASE)
     assert result.returncode == 0, result.stderr + result.stdout
-    assert methods_and_paths(calls) == [("GET", "/healthz"), ("GET", "/readyz"), ("POST", "/cohorts"),
+    assert methods_and_paths(calls) == [("GET", "/version"), ("GET", "/readyz"), ("POST", "/cohorts"),
                                         ("POST", f"/cohorts/{COHORT_ID}/runs"), ("DELETE", f"/cohorts/{COHORT_ID}")]
     assert "481" in result.stdout
 
@@ -116,12 +118,14 @@ def test_through_the_web_proxy_every_path_is_under_the_api_prefix(tmp_path):
     result, calls = run_smoke(tmp_path, BASE, "--api-prefix", "/api")
     assert result.returncode == 0, result.stderr + result.stdout
     assert [path for _, path in methods_and_paths(calls)] == [
-        "/api/healthz", "/api/readyz", "/api/cohorts", f"/api/cohorts/{COHORT_ID}/runs", f"/api/cohorts/{COHORT_ID}"]
+        "/api/version", "/api/readyz", "/api/cohorts", f"/api/cohorts/{COHORT_ID}/runs", f"/api/cohorts/{COHORT_ID}"]
 
 
 @pytest.mark.parametrize("overrides", [
-    {"GET__healthz": (503, {"status": "unavailable"})},
-    {"GET__healthz": None},
+    {"GET__version": (503, {"status": "unavailable"})},
+    {"GET__version": None},
+    {"GET__version": (200, {"status": "ok"})},                      # no version field
+    {"GET__version": (200, {"version": "not a sha"})},
     {"GET__readyz": (503, {"status": "unavailable", "error": "OperationalError"})},
     {"GET__readyz": (200, {"status": "ready", "cdm_persons": 0})},         # an empty database is not ready
     {"GET__readyz": (200, {"status": "starting", "cdm_persons": 5724})},
@@ -178,3 +182,19 @@ def test_a_flag_without_its_value_is_refused_instead_of_looping_forever(tmp_path
     result = subprocess.run([BASH, str(SCRIPT), BASE, "--api-prefix"], capture_output=True, text=True, env=env,
                             timeout=15)
     assert result.returncode == 2 and "api-prefix" in result.stderr
+
+
+def test_the_version_the_deploy_expects_must_be_the_version_the_url_reports(tmp_path):
+    ok, _ = run_smoke(tmp_path, BASE, "--expect-version", SHA)
+    assert ok.returncode == 0, ok.stderr + ok.stdout
+    bad, calls = run_smoke(tmp_path, BASE, "--expect-version", OTHER_SHA)
+    assert bad.returncode != 0 and SHA in bad.stderr and OTHER_SHA in bad.stderr
+    assert methods_and_paths(calls) == [("GET", "/version")]  # it stopped before running anything
+
+
+@pytest.mark.parametrize("args", [
+    ["--expect-version"], ["--expect-version", "latest"], ["--expect-version", "a; echo hi"],
+])
+def test_a_bad_expected_version_is_refused_before_any_request(tmp_path, args):
+    result, calls = run_smoke(tmp_path, BASE, *args)
+    assert result.returncode != 0 and calls == []

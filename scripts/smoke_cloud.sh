@@ -2,26 +2,32 @@
 # Smoke test of one deployed URL: it is alive, it is ready (database reachable and seeded), and it can run one real
 # cohort (docs/deployment.md, issue #17).
 #
-#   bash scripts/smoke_cloud.sh <https://base-url> [--api-prefix /api]
+#   bash scripts/smoke_cloud.sh <https://base-url> [--api-prefix /api] [--expect-version <git sha>]
 #
-# --api-prefix is for the web service, which proxies the API under /api. The cohort it creates is always deleted again.
+# --api-prefix is for the web service, which proxies the API under /api. --expect-version is the commit the URL must be
+# running (read from /version; Cloud Run reserves /healthz, so that path is not used). The cohort it creates is always
+# deleted again.
 # The reference cohort (new-user lisinopril, docs/cohort-engine.md) must come back with its documented final count of
 # 481 from the committed seed. Sends no credentials.
 set -euo pipefail
 
-BASE="" PREFIX=""
+BASE="" PREFIX="" EXPECT=""
 while (( $# )); do
   case "$1" in
     --api-prefix)
       (( $# >= 2 )) || { echo "error: --api-prefix needs a value" >&2; exit 2; }
       PREFIX="$2"; shift 2 ;;
-    -h | --help) sed -n '2,9p' "$0"; exit 0 ;;
+    --expect-version)
+      (( $# >= 2 )) || { echo "error: --expect-version needs a value" >&2; exit 2; }
+      EXPECT="$2"; shift 2 ;;
+    -h | --help) sed -n '2,11p' "$0"; exit 0 ;;
     -*) echo "unknown argument: '$1'" >&2; exit 2 ;;
     *) [ -z "$BASE" ] || { echo "unexpected argument: '$1'" >&2; exit 2; }; BASE="$1"; shift ;;
   esac
 done
 [[ "$BASE" =~ ^https://[A-Za-z0-9.-]+$ ]] || { echo "usage: smoke_cloud.sh https://host [--api-prefix /api]" >&2; exit 2; }
 [[ -z "$PREFIX" || "$PREFIX" =~ ^/[A-Za-z0-9/_-]*$ ]] || { echo "invalid --api-prefix" >&2; exit 2; }
+[[ -z "$EXPECT" || "$EXPECT" =~ ^[0-9a-f]{7,40}$ ]] || { echo "invalid --expect-version" >&2; exit 2; }
 
 PYTHON="$(command -v python3 || command -v python || true)"
 [ -n "$PYTHON" ] || { echo "python is required to read the JSON answers" >&2; exit 2; }
@@ -60,8 +66,12 @@ cleanup() {
 trap cleanup EXIT
 
 echo "smoke: ${BASE}${PREFIX}"
-request GET /healthz
-[ "$STATUS" = "200" ] || fail "/healthz answered ${STATUS}"
+request GET /version
+[ "$STATUS" = "200" ] || fail "/version answered ${STATUS}"
+running="$(echo "$BODY" | json_field version)"
+[[ "$running" =~ ^[0-9a-f]{7,40}$ ]] || fail "/version did not report a commit: ${BODY}"
+if [ -n "$EXPECT" ] && [ "$running" != "$EXPECT" ]; then fail "this URL runs ${running}, but ${EXPECT} was being deployed"; fi
+echo "version: ${running}"
 request GET /readyz
 [ "$STATUS" = "200" ] || fail "/readyz answered ${STATUS}: ${BODY}"
 [ "$(echo "$BODY" | json_field status)" = "ready" ] || fail "/readyz is not ready: ${BODY}"
