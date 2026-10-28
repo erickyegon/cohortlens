@@ -117,14 +117,17 @@ A rollback is a **traffic shift**, not a rebuild or a redeploy: Cloud Run revisi
 - **incident**: an issue number to have the result commented there (optional);
 - **dry run**: tick it first if unsure: it prints `from -> to` and changes nothing.
 
-A **prod** rollback runs in the protected `production` environment, so it waits for the reviewer's approval exactly like a promotion (**Review deployments → production → Approve and deploy**): the prod deploy account can only be used from that environment. A rollback also waits for a deploy or promotion that is already running instead of racing it.
+A **prod** rollback runs in the protected `production` environment, so it waits for the reviewer's approval exactly like a promotion (**Review deployments → production → Approve and deploy**): the prod deploy account can only be used from that environment.
+
+**Rollbacks and deploys.** A rollback has its **own concurrency group**, so a queued deploy or promotion can never replace a waiting rollback (GitHub keeps only one pending run per group). The reverse is covered in the deploy script: it reads which revision serves the service before it deploys the candidate and again before it moves traffic, and if that changed in between (a rollback landed meanwhile) it **refuses to move the traffic**, leaves the new revision as a no-traffic candidate and fails, so a rollback is never undone by a deploy that finishes later.
 
 What `rollback.sh` checks and does, in this order:
 1. the service must have **exactly one revision serving all its traffic** (anything else is refused and nothing is changed);
 2. without `--revision` the target is the **next older** revision than the serving one, so a newer candidate that never served is never chosen; a given revision must be one of this service's own revisions (the name must match the environment and service) and must not be the one already serving; the oldest revision has no previous one;
-3. `gcloud run services update-traffic ... --to-revisions=<target>=100`;
-4. the **smoke test** on the service URL (the web service through its `/api` proxy); it checks that the rolled-back revision is alive and ready and runs the reference cohort. A failed smoke test **fails the run but does not move the traffic back**: that is a decision for a person;
-5. with an incident number, a **comment** on that issue: from revision, to revision, who started it, a link to the run, and whether the smoke test passed (or that it failed, or that the traffic was not moved). A comment that cannot be posted is a warning, not a failed rollback.
+3. **before anything moves, the target is checked**: it is tagged (`rollback-check`) and smoke tested on its own tagged URL, then the tag is removed. An older revision may be one that failed its candidate smoke test and never served, so a revision that fails this check is **never** moved to (the run fails and says so; pick another revision). `--no-verify` (command line only, not in the workflow) skips just this check, for an emergency where the target is known good, and the incident comment says so;
+4. `gcloud run services update-traffic ... --to-revisions=<target>=100`;
+5. the **smoke test** on the service URL (the web service through its `/api` proxy); it checks that the rolled-back revision is alive and ready and runs the reference cohort. A failed smoke test **fails the run but does not move the traffic back**: that is a decision for a person. To undo the rollback, run **Rollback** again with `revision` set to the original revision (the incident comment names it);
+6. with an incident number, a **comment** on that issue: from revision, to revision, who started it, a link to the run, and whether the smoke test passed (or that it failed, or that the traffic was not moved). A comment that cannot be posted is a warning, not a failed rollback.
 
 It builds nothing, deploys nothing, deletes nothing and touches no IAM.
 

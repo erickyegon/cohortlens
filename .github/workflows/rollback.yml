@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 15
     if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' && inputs.environment == 'dev'
     concurrency:
-      group: deploy-dev  # wait for a running dev deploy instead of racing it
+      group: rollback-dev  # its own group: GitHub keeps one pending run per group, so a queued deploy must not replace a waiting rollback
       cancel-in-progress: false
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
@@ -86,7 +86,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' && inputs.environment == 'prod'
     environment: production
     concurrency:
-      group: promote-prod  # wait for a running promotion instead of racing it
+      group: rollback-prod  # its own group (see above); a deploy that is mid-flight refuses to move traffic that changed under it
       cancel-in-progress: false
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}

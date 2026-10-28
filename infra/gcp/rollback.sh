@@ -2,7 +2,8 @@
 # Roll one service back by shifting its traffic to an earlier revision (docs/deployment.md, issue #19). Run by
 # rollback.yml; usable by hand.
 #
-#   bash infra/gcp/rollback.sh --env dev|prod --service api|web [--revision <name>] [--incident <issue number>] [--dry-run]
+#   bash infra/gcp/rollback.sh --env dev|prod --service api|web [--revision <name>] [--incident <issue number>]
+#                              [--dry-run] [--no-verify]
 #
 # Settings (environment variables, validated before anything runs): PROJECT_ID, REGION. For --incident also
 # GITHUB_REPOSITORY (owner/name), and optionally GITHUB_ACTOR and GITHUB_RUN_URL (shown in the comment). SMOKE_SCRIPT
@@ -12,14 +13,16 @@
 # traffic to a revision that already exists. Without --revision the target is the revision BEFORE the one serving now
 # (the next older one, so a newer candidate that never served is never chosen). A given --revision must be one of this
 # service's own revisions and must not be the one already serving. The service must have exactly one revision serving
-# all its traffic. Afterwards it runs the smoke test on the service URL (the web service through its /api proxy) and, with
+# all its traffic. BEFORE any traffic moves, the target is tagged and smoke tested on its own URL (an older revision may
+# be one that failed its candidate smoke test and never served): if it fails, nothing moves. --no-verify skips only that
+# check, for an emergency where the target is known good. Afterwards it runs the smoke test on the service URL (the web service through its /api proxy) and, with
 # --incident, comments on that GitHub issue with what moved and whether the smoke test passed. A failed smoke test fails
 # the run but does NOT move the traffic back: that is a decision for a person. --dry-run prints the plan and changes
 # nothing. It deletes nothing and touches no IAM.
 set -euo pipefail
 export LC_ALL=C
 
-ENVIRONMENT="" SERVICE="" REVISION="" INCIDENT="" DRY=0 REVISION_GIVEN=0
+ENVIRONMENT="" SERVICE="" REVISION="" INCIDENT="" DRY=0 REVISION_GIVEN=0 VERIFY=1
 while (( $# )); do
   case "$1" in
     --env | --service | --revision | --incident)
@@ -32,7 +35,8 @@ while (( $# )); do
       esac
       shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    -h | --help) sed -n '2,18p' "$0"; exit 0 ;;
+    --no-verify) VERIFY=0; shift ;;
+    -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1'" >&2; exit 2 ;;
   esac
 done
@@ -110,8 +114,36 @@ fi
 
 echo "Rollback ${NAME} (${ENVIRONMENT}): ${FROM} -> ${TO}"
 if (( DRY )); then
-  echo "dry run: the traffic was NOT moved, nothing was changed"
+  note=""; (( VERIFY )) && note=" (the target would be smoke tested on its own URL first)"
+  echo "dry run: the traffic was NOT moved, nothing was changed${note}"
   exit 0
+fi
+
+URL="$(gcloud run services describe "$NAME" "${TARGET[@]}" --format='value(status.url)')" \
+  || { comment_on_incident "rollback NOT done: the service URL could not be read; traffic was not moved"; die "could not read the URL of ${NAME}; the traffic was not moved"; }
+URL="${URL//$'\r'/}"
+SMOKE_ARGS=()
+[ "$SERVICE" = "web" ] && SMOKE_ARGS=(--api-prefix /api)
+
+# an older revision may be one that failed its candidate smoke test and never served: prove the target works, on its
+# own tagged URL, BEFORE any traffic moves
+VERIFIED_NOTE=""
+if (( VERIFY )); then
+  TAG_URL="${URL/https:\/\//https:\/\/rollback-check---}"
+  if ! gcloud run services update-traffic "$NAME" --update-tags="rollback-check=${TO}" "${TARGET[@]}"; then
+    comment_on_incident "rollback NOT done: ${TO} could not be tagged for its check; traffic was not moved"
+    die "could not tag ${TO} to check it first; the traffic was not moved"
+  fi
+  verified=0
+  bash "$SMOKE" "$TAG_URL" ${SMOKE_ARGS[@]+"${SMOKE_ARGS[@]}"} && verified=1
+  gcloud run services update-traffic "$NAME" --remove-tags=rollback-check "${TARGET[@]}" \
+    || echo "warning: could not remove the rollback-check tag from ${NAME}" >&2
+  if (( ! verified )); then
+    comment_on_incident "rollback NOT done: ${TO} failed its smoke test on its own URL, so traffic was not moved (choose another revision, or use --no-verify only if the target is known good)"
+    die "${TO} failed its smoke test on its own URL; the traffic was not moved (choose another revision with --revision)"
+  fi
+else
+  VERIFIED_NOTE="; the target was not verified before the move (--no-verify)"
 fi
 
 if ! gcloud run services update-traffic "$NAME" --to-revisions="${TO}=100" "${TARGET[@]}"; then
@@ -120,17 +152,12 @@ if ! gcloud run services update-traffic "$NAME" --to-revisions="${TO}=100" "${TA
 fi
 echo "traffic of ${NAME}: 100% on ${TO}"
 
-URL="$(gcloud run services describe "$NAME" "${TARGET[@]}" --format='value(status.url)')" \
-  || { comment_on_incident "traffic moved, but the service URL could not be read, so the smoke test did NOT run"; die "could not read the URL of ${NAME}"; }
-URL="${URL//$'\r'/}"
-SMOKE_ARGS=()
-[ "$SERVICE" = "web" ] && SMOKE_ARGS=(--api-prefix /api)
 if bash "$SMOKE" "$URL" ${SMOKE_ARGS[@]+"${SMOKE_ARGS[@]}"}; then
   SMOKE_RESULT="smoke test passed"
-  comment_on_incident "traffic is on ${TO}; ${SMOKE_RESULT}"
+  comment_on_incident "traffic is on ${TO}; ${SMOKE_RESULT}${VERIFIED_NOTE}"
 else
   SMOKE_RESULT="smoke test FAILED"
-  comment_on_incident "traffic is on ${TO}, but the ${SMOKE_RESULT}; the traffic was NOT moved back, a person has to decide"
+  comment_on_incident "traffic is on ${TO}, but the ${SMOKE_RESULT}${VERIFIED_NOTE}; the traffic was NOT moved back, a person has to decide (to undo: run Rollback again with revision ${FROM})"
   die "the rollback moved the traffic to ${TO} but the smoke test failed; the traffic was NOT moved back"
 fi
 echo "ROLLBACK OK: ${NAME} serves ${TO}"
