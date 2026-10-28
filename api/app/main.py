@@ -57,6 +57,13 @@ def healthz():
     return {"status": "ok", "version": SERVICE_VERSION}
 
 
+@app.get("/version")
+def version():
+    """Which commit this revision runs. Cloud Run reserves /healthz (its front end answers 404 before the request
+    reaches the container), so the smoke test and the prod promotion read the running version from here."""
+    return {"version": SERVICE_VERSION}
+
+
 @app.get("/readyz")
 def readyz():
     try:

@@ -11,7 +11,7 @@
 # It builds nothing and looks nothing up by tag (tags can be moved). It reads the images of the revisions that SERVE
 # the DEV services right now (all traffic on one revision; never the newest, possibly untested, template). Those
 # were deployed by digest and passed the dev smoke test. It checks that both are digest-pinned images of this
-# project's registry, asks the dev API which commit it is running, and hands exactly those digests to
+# project's registry, asks the dev API (/version) which commit it is running, and hands exactly those digests to
 # infra/gcp/deploy.sh for prod: a no-traffic candidate, a smoke test on its tagged URL, and only then traffic.
 # --expect-version is the commit the approver was shown; if dev has moved on to another commit since, it refuses.
 # It changes nothing in dev and deletes nothing.
@@ -81,7 +81,7 @@ WEB_IMAGE="$(dev_image cohortlens-web-dev web)"
 DEV_URL="$(gcloud run services describe cohortlens-api-dev "${TARGET[@]}" --format='value(status.url)')" \
   || die "could not read the URL of the dev API"
 [[ "$DEV_URL" =~ ^https://[A-Za-z0-9.-]+$ ]] || die "the dev API has no usable URL"
-HEALTH="$(curl -fsS --max-time 30 "${DEV_URL}/healthz")" || die "the dev API did not answer /healthz"
+HEALTH="$(curl -fsS --max-time 30 "${DEV_URL}/version")" || die "the dev API did not answer /version"
 VERSION="$(printf '%s' "$HEALTH" | sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p')"
 [[ "$VERSION" =~ ^[0-9a-f]{7,40}$ ]] || die "the dev API does not report a commit version (reported: '${VERSION:-none}'); nothing was promoted"
 if [ -n "$EXPECTED" ] && [ "$VERSION" != "$EXPECTED" ]; then

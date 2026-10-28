@@ -113,13 +113,13 @@ gcloud run jobs deploy "$JOB" --image="$API_IMAGE" --service-account="$RUNTIME_S
   --max-retries=0 --task-timeout=300s "${TARGET[@]}"
 gcloud run jobs execute "$JOB" --wait "${TARGET[@]}"
 
-deploy_service "$API" -- --image="$API_IMAGE" --service-account="$RUNTIME_SA" --port=8000 --allow-unauthenticated \
+deploy_service "$API" --expect-version "$VERSION" -- --image="$API_IMAGE" --service-account="$RUNTIME_SA" --port=8000 --allow-unauthenticated \
   --set-secrets="DATABASE_URL_APP=${APP_SECRET}:latest,DATABASE_URL_READER=${READER_SECRET}:latest" \
   --set-env-vars="SERVICE_VERSION=${VERSION},DEPLOYMENT_ENVIRONMENT=${ENVIRONMENT}"
 
 API_URL="$(service_url "$API")"
 API_HOST="${API_URL#https://}"
-deploy_service "$WEB" --api-prefix /api -- --image="$WEB_IMAGE" --service-account="$RUNTIME_SA" --port=8080 \
+deploy_service "$WEB" --api-prefix /api --expect-version "$VERSION" -- --image="$WEB_IMAGE" --service-account="$RUNTIME_SA" --port=8080 \
   --allow-unauthenticated \
   --set-env-vars="API_UPSTREAM=${API_URL},API_HOST=${API_HOST},NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1"
 

@@ -46,7 +46,7 @@ Verified by `scripts/smoke_compose.sh`: reader can read `cdm`, cannot read `app`
 
 ## API
 
-The API serves its routes **without** an `/api` prefix (`/healthz`, `/cohorts`, ...). The nginx proxy (and the Vite dev server) strips `/api`, so the public paths are `/api/healthz`, `/api/cohorts`, and so on.
+The API serves its routes **without** an `/api` prefix (`/healthz`, `/version`, `/cohorts`, ...). The nginx proxy (and the Vite dev server) strips `/api`, so the public paths are `/api/healthz`, `/api/cohorts`, and so on.
 
 | Method | Path (public) | Purpose | Success | Errors |
 |---|---|---|---|---|

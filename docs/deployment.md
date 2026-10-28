@@ -42,7 +42,7 @@ Every merge to `main` deploys to dev. The workflow authenticates with workload i
 
 1. **Migrate first.** `alembic upgrade head` runs as the Cloud Run job `cohortlens-migrate-dev` (runtime account, app-database secret by reference) and must finish before any new revision exists. Migrations are expand-then-contract, so the revision that is still serving keeps working.
 2. **Candidate, not traffic.** Each service (`cohortlens-api-dev`, then `cohortlens-web-dev`) is deployed as a revision with `--no-traffic --tag candidate`.
-3. **Smoke test the candidate** on its tagged URL (`scripts/smoke_cloud.sh`): `/healthz`, `/readyz` (the database answers and has persons), then the reference cohort is created, run (final count **481**) and deleted. The web candidate is tested through its nginx proxy (`/api/...`).
+3. **Smoke test the candidate** on its tagged URL (`scripts/smoke_cloud.sh`): `/version` (must be the commit being deployed; **not** `/healthz`, which Cloud Run reserves and answers 404 itself), `/readyz` (the database answers and has persons), then the reference cohort is created, run (final count **481**) and deleted. The web candidate is tested through its nginx proxy (`/api/...`).
 4. **Move traffic** (`update-traffic --to-latest`, tag removed). A failed migration or smoke test leaves traffic where it was and fails the workflow.
 
 Images are deployed **by digest**, never by tag. The first deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live and is smoke tested afterwards.
@@ -90,7 +90,7 @@ After a successful dev deploy (or by hand: **Actions → Promote to prod → Run
 
 After approval, `promote.sh` does this and nothing else:
 1. reads the images of the **revisions that serve the dev services right now** (the one revision holding all the traffic, deployed by digest, which passed the dev smoke test; never the newest template, which after a failed dev deploy is an untested candidate) and refuses unless both are digest-pinned images of this project's registry. It never looks anything up by tag, because a tag can be moved;
-2. asks the dev API which commit it runs (`/healthz`) and refuses if that is not the commit the approver was shown (dev moved on: start a new promotion);
+2. asks the dev API which commit it runs (`/version`) and refuses if that is not the commit the approver was shown (dev moved on: start a new promotion);
 3. calls `deploy.sh --env prod` with **those same digests**: the migration job on the prod database first, then each service as a `--no-traffic` revision tagged `candidate`, a smoke test on its tagged URL, and only then the traffic move. A failed smoke test leaves traffic where it was and fails the run.
 
 The prod smoke test creates the reference cohort in the **prod** database, runs it and deletes it again. The first prod deploy of a service cannot be held back (Cloud Run needs traffic on a new service), so it goes live directly and is smoke tested afterwards; the approval already happened before it. **If the web smoke test fails after the API went live**, prod runs the new API with the old web (the API is deployed and promoted first). Migrations are expand-then-contract, so the old web keeps working against the new API; fix forward or roll the API back (#19).
