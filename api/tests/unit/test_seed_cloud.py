@@ -39,9 +39,13 @@ if [ "${FAKE_PSQL_FAIL_ON:-}" != "" ] && grep -qa "$FAKE_PSQL_FAIL_ON" "$FAKE_DI
   echo "ERROR: simulated failure" >&2; exit 1
 fi
 if [[ "$args" == *"from pg_roles"* ]]; then echo "${FAKE_ROLES_EXIST:-0}"; exit 0; fi
-if [[ "$args" == *"cdm.person"* ]]; then
-  seen=$(cat "$FAKE_DIR/person_asked" 2>/dev/null || echo 0); echo $(( seen + 1 )) > "$FAKE_DIR/person_asked"
-  if [ "$seen" = "0" ]; then echo "${FAKE_PERSON_BEFORE:-0}"; else echo "${FAKE_PERSON_AFTER:-5724}"; fi
+if [[ "$args" == *"to_regclass"* ]]; then
+  if [ "${FAKE_PERSON_BEFORE:-0}" = "0" ]; then echo f; else echo t; fi; exit 0
+fi
+if [[ "$args" == *"count(*) from cdm.person"* ]]; then
+  # the count is the "before" value until the seed has been fed to psql, the "after" value from then on
+  if grep -qa "CREATE TABLE cdm.person" "$FAKE_DIR"/psql_stdin_* 2>/dev/null; then echo "${FAKE_PERSON_AFTER:-5724}"
+  else echo "${FAKE_PERSON_BEFORE:-0}"; fi
   exit 0
 fi
 exit 0
@@ -139,7 +143,7 @@ def test_the_script_exists_and_is_valid_bash_with_strict_mode():
     ["--env", "dev", "--confirm-endpoint", ENDPOINT, "--force"],
     ["--confirm-endpoint", ENDPOINT],
     ["--env", "dev", "--confirm-endpoint"],                                # a flag without its value must not hang
-    [],
+    ["unexpected-positional"],
 ])
 def test_bad_arguments_are_refused_before_anything_is_touched(tmp_path, args):
     result, work = run_seed(tmp_path, *args)
@@ -177,7 +181,7 @@ def test_a_fresh_run_creates_the_roles_then_writes_the_secrets_then_loads_the_se
     assert roles_at < seed_at < grants_at
     order = (work / "order").read_text(encoding="utf-8").splitlines()
     first_secret = next(i for i, line in enumerate(order) if line.startswith("gcloud") and
-                        "versions add" in files(work, "gcloud_args")[int(line.split()[1]) - 1])
+                        "add" in files(work, "gcloud_args")[int(line.split()[1]) - 1].split(SEP))
     roles_call = next(i for i, line in enumerate(order) if line.startswith("psql") and
                       "CREATE ROLE" in inputs_for(work, line))
     seed_call = next(i for i, line in enumerate(order) if line.startswith("psql") and

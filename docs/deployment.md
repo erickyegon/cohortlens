@@ -51,9 +51,28 @@ The web container renders its nginx config at start from `API_UPSTREAM` and `API
 
 **The API service is public** (`--allow-unauthenticated`), like the web service: the data is synthetic and the browser reaches the API through the web proxy, so there is no sign-in to protect. This is a demo decision; revisit it before any real data.
 
-**Before the first run** (in this order): the `production` environment (done), `bash infra/gcp/setup.sh` plan reviewed and then `--apply`, the repository variables it prints set in GitHub (**Settings → Secrets and variables → Actions → Variables**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SA_DEV`, `GCP_RUNTIME_SA_DEV`, `GCP_ARTIFACT_REGISTRY`), and the Neon `dev` branch loaded with the roles, schema grants and seed and the two dev secrets filled (`make seed-cloud`, not built yet). Until `GCP_PROJECT_ID` is set the workflow is skipped.
+**Before the first run** (in this order): the `production` environment (done), `bash infra/gcp/setup.sh` plan reviewed and then `--apply`, the repository variables it prints set in GitHub (**Settings → Secrets and variables → Actions → Variables**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SA_DEV`, `GCP_RUNTIME_SA_DEV`, `GCP_ARTIFACT_REGISTRY`), and the Neon `dev` branch prepared with `make seed-cloud` (below), after which `GCP_PROJECT_ID` is set last to switch the workflow on. Until `GCP_PROJECT_ID` is set the workflow is skipped.
 
 **Not verified against a real project.** Nothing here has run against Google Cloud or Neon; the tests use fakes. The Cloud Run behaviours it relies on (tagged candidate URLs of the form `https://candidate---<service host>`, `--no-traffic` on an existing service, `update-traffic --to-latest`) are documented Cloud Run behaviour but unconfirmed in this project until the first run.
+
+## Neon dev branch (`make seed-cloud`, `scripts/seed_cloud.sh`)
+
+Run once per environment, by hand, before the first deploy. It prepares the Neon branch and gives the Cloud Run services their database URLs without anyone seeing a password:
+
+1. creates the roles `cohortlens_reader` and `cohortlens_app` with **generated** passwords and the schema `app` (`db/cloud/00-roles.sql`), then stores the two database URLs as new versions of `cohortlens-dev-database-url-app` and `-reader` (the value goes to `gcloud` on stdin, never on a command line or to the screen);
+2. loads `data/seed/omop_subset.sql.gz` in **one transaction**, only if the database has no persons yet;
+3. applies `db/init/20-grants.sql` (the same grants as the local stack) and checks that `cdm.person` has 5,724 rows.
+
+**What you do** (Git Bash, in the repository folder, signed in to `gcloud`):
+1. In the Neon console open project `cohortlens` → **Branches** → `dev` → **Connect**. Choose database `neondb`, role `neondb_owner`, and **untick "Connection pooling"** (the script needs the direct connection and refuses a pooled one). Copy the connection string. The host in it starts with the branch's endpoint id, `ep-...`.
+2. In Git Bash, set it for this terminal only (it is never written to a file or printed) and run the script, passing the endpoint id from the host name as the confirmation:
+   `export NEON_DEV_URL='postgresql://neondb_owner:...@ep-xxxx....neon.tech/neondb?sslmode=require'`
+   `make seed-cloud ARGS="--confirm-endpoint ep-xxxx"`
+3. Close the terminal or `unset NEON_DEV_URL` afterwards.
+
+The confirmation exists so that a production connection string pasted by mistake is refused: the endpoint in the URL must be the one you typed. Needs `psql` or Docker (it falls back to the `postgres:18` image's `psql`). It is safe to run twice (existing roles keep their passwords, existing data is not reloaded); `--rotate-passwords` sets new passwords on the existing roles and stores new secret versions. It never drops, truncates or deletes anything. Prod is a separate, deliberate step, not supported by this script yet.
+
+The cloud role SQL differs from the local init script in one way: the Neon owner is not a superuser, so the `app` schema is created by the owner and `cohortlens_app` is granted `USAGE, CREATE` on it (instead of `CREATE SCHEMA ... AUTHORIZATION cohortlens_app`). Rehearsed against a throwaway Postgres 18 with a non-superuser owner: roles, grants, password enforcement, the Alembic migration as `cohortlens_app`, a second run and a rotation all behaved as described. Not run against Neon itself.
 
 ## Secrets
 Cloud database credentials, the Grafana Cloud token and the Anthropic API key live in **Google Secret Manager** (GitHub Environments hold only what the workflows themselves need). The passwords in `compose.yaml` and `.env.example` are local-only placeholders for `docker compose up`; they must never be reused in any real environment, and a real environment must never rely on those defaults.
