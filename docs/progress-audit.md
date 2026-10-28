@@ -2,7 +2,7 @@
 
 Audit date: 2026-10-28 (UTC). Audited commit: `a567dbe` (`main`, after PR #53). Read-only: no code was changed.
 
-**Changes since the audited commit.** PR [#57](https://github.com/erickyegon/cohortlens/pull/57) (the hardened Google Cloud setup script) was merged at 01:11 UTC (`cda9408`, CI green), so `main` now carries the hardened script and its 75 tests. **No Reviewer round-2 review is recorded on #57** (verified: it has no reviews; #56 has only the round-1 REQUEST CHANGES), so the hardened script reached `main` unreviewed in round 2. Everything below describes the audited commit unless it says otherwise.
+**Changes since the audited commit.** PR [#57](https://github.com/erickyegon/cohortlens/pull/57) (the hardened Google Cloud setup script) was merged at 01:11 UTC (`cda9408`, CI green), so `main` now carries the hardened script and its 75 tests. **The Reviewer's round-2 review of #57 was posted only after the merge** (verdict APPROVE, none of the findings blocking; at audit time #57 had no reviews and #56 had only the round-1 REQUEST CHANGES), so the hardened script reached `main` before its round-2 approval. Five low-severity findings from that review (F10 to F14, section 5 item 2) are still open. Everything below describes the audited commit unless it says otherwise.
 Compared against: the original project outline (the `.docx` is not in the repo, so it was used from outside it, together with the phase summary in the audit request), the course rubric (12 criteria, 24 points, 10 to pass), and what actually exists in the repository, history, pull requests, issues, the Project board, Actions runs and branch protection.
 
 **How to read the evidence.** Every claim below is marked **verified** (I ran it or read the GitHub API in this audit), **link** (a checked artifact), or **unverified** (stated in a document but not backed by something I ran). Section 9 lists exactly what was run and what it printed.
@@ -24,7 +24,7 @@ What is solid: the engine, API, UI, tests, containers and CI are real and run. F
 
 What is not done: nothing is deployed, there is no continuous delivery, and there is no telemetry, alerting or on-call agent (rows 8, 10, 11, 12 are **0**, row 9 is **1 of 3**). The README is stale and says "phase 1", the live-URL line says "TBD", and three of the five architecture decision records are empty skeletons.
 
-Two things to know first: at the audited commit `main` carried the **weaker earlier version of the Google Cloud setup script** (PR #56 was merged before its review fixes were pushed); PR #57 has since brought in the hardened version, **without a recorded round-2 review**. And `verify-seed` was **flaky in my runs** (section 6).
+Two things to know first: at the audited commit `main` carried the **weaker earlier version of the Google Cloud setup script** (PR #56 was merged before its review fixes were pushed); PR #57 has since brought in the hardened version; it was merged **before** its round-2 review (approved afterwards). And `verify-seed` was **flaky in my runs** (section 6).
 
 ---
 
@@ -140,7 +140,7 @@ Documented means a link a reader can follow today.
 | 11 | **Google Cloud set up by a bash script**, not Terraform | Fewer moving parts for a one-time setup (outline allowed "Terraform or scripts") | Partly: `docs/deployment.md`. Dashboards and alert rules are still planned as Terraform (not started). |
 | 12 | **Stacked PRs and a recovery PR:** #40, #41 and #42 were merged into their stacked base branches, so only #39 reached `main`; PR #44 brought them in. The later rule is "at most one level of stacking; check the base is `main` before handoff" | A merge-order mistake | Yes: [docs/process.md](process.md) (#48) |
 | 13 | **#35 and #36 were merged by the agent** at the owner's explicit instruction | Owner request | Yes: `docs/process.md` |
-| 14 | **#56 was merged before its review fixes were pushed**; the hardened script followed in #57, which was itself **merged without a recorded round-2 Reviewer review** | Both merges happened while a review was still in progress | This audit and the PR #57 body |
+| 14 | **#56 was merged before its review fixes were pushed**; the hardened script followed in #57, which was itself **merged before its round-2 Reviewer review**, approved afterwards with five non-blocking findings | Both merges happened while a review was still in progress | This audit and the PR #57 body |
 | 15 | **Frontend uses plain React and CSS bars**, not TanStack Query and Recharts | Minimal, tested, working | Partly: `docs/architecture.md` says no router or UI library but does not name the planned libraries |
 | 16 | **The API serves routes without `/api`**; nginx and Vite strip the prefix | Keeps `/healthz` and `/readyz` at the root | Yes: `docs/architecture.md` |
 | 17 | **Single-account "comment" reviews** by a Reviewer subagent; PR #51 was drafted before its tests (disclosed in the PR) | One GitHub account cannot approve its own PR | Yes: `docs/process.md`; the PR #51 body |
@@ -155,7 +155,7 @@ Estimates are the author's, including review cycles, for one person-equivalent o
 | Order | Item | Est. hours | Points it protects or gains | Depends on | Needs you |
 |---|---|---|---|---|---|
 | 1 | **Fix the README, empty ADRs, runbooks, spec drift, board** (section 7) | 3 | Protects rows 1, 2, 4 (up to 6 points at risk from presentation) | nothing | review |
-| 2 | **Get the missing round-2 review of the hardened setup script** (#57 is merged but has none recorded) and fix anything it finds | 1 | Safety of everything below | | review |
+| 2 | **Fix the open findings from the round-2 review of the setup script** (posted after #57 merged, APPROVE): F10 the branch-policy check must select `type == "branch"` (a tag policy named `main` passes today) and decide on `can_admins_bypass`; F11 test the jq expressions and verify an existing provider's issuer and mapping, not only its condition; F12 test the real gcloud "may not exist" and "not found or permission denied" messages; F13 compare the full condition in the plan test; F14 say "does not exist or cannot be read" | 1.5 | Safety of everything below | | review |
 | 3 | **Dev deployment**: GitHub `production` environment, run `setup.sh --apply`, Neon roles and seed (`make seed-cloud`), Cloud Run services, `deploy-dev.yml`, post-deploy smoke ([#17](https://github.com/erickyegon/cohortlens/issues/17)) | 9 | **+2** (row 8) **+1** (row 9) | #2, Neon login (done) | **GitHub environment (browser), approve `--apply`**, set GitHub variables |
 | 4 | **Prod gate and rollback**: promote the same image digest behind the `production` environment, rollback by traffic shift ([#18](https://github.com/erickyegon/cohortlens/issues/18), [#19](https://github.com/erickyegon/cohortlens/issues/19)) | 4 | **+1** (row 9, to 3) | #3 | you are the required reviewer |
 | 5 | **Observability**: OTel traces, metrics, JSON logs with a shared trace id ([#20](https://github.com/erickyegon/cohortlens/issues/20)), scrubber and leak test ([#21](https://github.com/erickyegon/cohortlens/issues/21)), Grafana Cloud export ([#22](https://github.com/erickyegon/cohortlens/issues/22)), dashboard and the two alert rules as code ([#23](https://github.com/erickyegon/cohortlens/issues/23)), k6 load generator | 13 | **+2** (row 10) **+1** (row 11) | #3 deployed (for cloud export); local Grafana works earlier | **Grafana Cloud free account and token (browser)** |
@@ -178,7 +178,7 @@ Points per hour: item 3 is about 0.33, item 4 about 0.25, item 5 about 0.23, ite
 | **README out of date and no scorecard map** | Peer reviewers start there | Item 1 |
 | **Empty or stub docs that AGENTS.md links to** | Reviewers follow links | Fill ADRs 002 to 005 and the runbooks as the work lands |
 | **Doc claims that nothing enforces** | The "80% coverage gate" and "telemetry leak test" appear in `docs/testing.md`; neither exists (unverified claims) | Implement or remove |
-| **The hardened setup script is on `main` with no round-2 review recorded** (#57 merged during review) | The script decides who can deploy to production | Complete the review before the first `--apply`; run the plan first; create the protected GitHub `production` environment first (the script refuses without it) |
+| **The hardened setup script is on `main`, merged before its round-2 review (approved afterwards); five low-severity findings are open and it has never run for real** | The script decides who can deploy to production | Fix F10 to F14 before the first `--apply`; run the plan first; create the protected GitHub `production` environment first (the script refuses without it, and the Reviewer confirmed that against the real GitHub API: the environment does not exist yet and returns 404) |
 | **Board is incomplete or stale** | Row 2 evidence | Section 7 |
 | **Dev can affect prod** | One shared Google Cloud project; the dev deploy account (no approval gate) could change or delete prod Cloud Run services (documented in `docs/deployment.md`) | Owner decision: accept, separate project, or conditions |
 | **Reviews are single-account comments** | Reviewers may ask where approval is | Explained in `docs/process.md`; the merge is the approval |
@@ -202,7 +202,7 @@ All verified from the GitHub API at audit time.
 | Handoff labels unused | No `tests-written`, `needs-review` or `resolved-by-agent` labels were ever applied | Either use them or drop the claim from `docs/agents.md` and the walkthrough |
 | Leftover branches | Remote: only `main` and `feat/E4-gcp-setup` (needed for #57) | none |
 | Stale docs | README status line and live-URL line; ADRs 002 to 005 empty; runbooks stubs; `docs/spec.md` US-5, FR-9, FR-10 (comorbidity handling), FR-8 (baseline not stored); `docs/testing.md` coverage gate and leak-test claims; `docs/process.md` walkthrough stops before deployment; Makefile `e2e`, `chaos`, `seed-cloud` are TODOs that exit 1 | Item 1 and as features land |
-| Pull requests without a Reviewer review | #30, #31, #38, #44 (docs or recovery) and **#57** (a code and security change, merged during its round-2 review) | Acceptable for docs; #57 needs its review (section 5, item 2) |
+| Pull requests without a Reviewer review | #30, #31, #38, #44 (docs or recovery) and **#57** (a code and security change: merged during its round-2 review, which was posted afterwards as APPROVE) | Acceptable for docs; #57's follow-up findings are in section 5, item 2 |
 
 ---
 
