@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Deploy CohortLens to one environment on Cloud Run (docs/deployment.md, issue #17). Run by deploy-dev.yml.
+# Deploy CohortLens to one environment on Cloud Run (docs/deployment.md, issues #17 and #18). Run by deploy-dev.yml
+# (dev) and, through promote.sh and after the reviewer's approval, by promote-prod.yml (prod).
 #
-#   bash infra/gcp/deploy.sh --env dev --version <git sha> --api-image <ref@sha256:...> --web-image <ref@sha256:...>
+#   bash infra/gcp/deploy.sh --env dev|prod --version <git sha> --api-image <ref@sha256:...> --web-image <ref@sha256:...>
 #
 # Settings (environment variables, validated before anything runs): PROJECT_ID, REGION, RUNTIME_SA (the runtime
 # service account of the environment). SMOKE_SCRIPT overrides the smoke test (tests only).
@@ -30,7 +31,7 @@ while (( $# )); do
         --web-image) WEB_IMAGE="$2" ;;
       esac
       shift 2 ;;
-    -h | --help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown argument: '$1'" >&2; exit 2 ;;
   esac
 done
@@ -38,7 +39,7 @@ done
 refuse() { echo "error: $*" >&2; exit 2; }
 die() { echo "error: $*" >&2; exit 1; }
 
-[[ "$ENVIRONMENT" == "dev" ]] || refuse "--env must be 'dev' (prod promotion is a separate, approval-gated workflow)"
+[[ "$ENVIRONMENT" == "dev" || "$ENVIRONMENT" == "prod" ]] || refuse "--env must be 'dev' or 'prod'"
 [[ "$VERSION" =~ ^[0-9a-f]{7,40}$ ]] || refuse "--version must be a git commit sha"
 IMAGE_PATTERN='^[a-z0-9.-]+/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$'
 [[ "$API_IMAGE" =~ $IMAGE_PATTERN ]] || refuse "--api-image must be pinned by digest (registry/path@sha256:...)"
@@ -48,6 +49,8 @@ PROJECT_ID="${PROJECT_ID-}"; REGION="${REGION-}"; RUNTIME_SA="${RUNTIME_SA-}"
 [[ "$REGION" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || refuse "invalid or missing REGION"
 [[ "$RUNTIME_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]] \
   || refuse "invalid or missing RUNTIME_SA"
+# an environment only ever runs as its own runtime account (cohortlens-run-dev / cohortlens-run-prod)
+[[ "$RUNTIME_SA" == "cohortlens-run-${ENVIRONMENT}@"* ]] || refuse "RUNTIME_SA must be the cohortlens-run-${ENVIRONMENT} account for --env ${ENVIRONMENT}"
 
 SMOKE="${SMOKE_SCRIPT:-$(dirname "$0")/../../scripts/smoke_cloud.sh}"
 TARGET=(--region="$REGION" --project="$PROJECT_ID")
