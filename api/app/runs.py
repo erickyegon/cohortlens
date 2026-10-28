@@ -139,12 +139,16 @@ async def run_cohort(cohort_id: str, request: Request):
     started = time.perf_counter()
     with telemetry.get_tracer().start_as_current_span("cohort.run", record_exception=False,
                                                       set_status_on_exception=False) as run_span:
-        response, outcome = await _run_and_record(request, parsed, row, trace_id, started, run_span)
-        run_span.set_attribute("cohortlens.outcome", outcome)
-        if outcome != "success":
-            run_span.set_status(Status(StatusCode.ERROR))
-        telemetry.record_run(outcome, time.perf_counter() - started)
-        logger.info("run finished outcome=%s duration_ms=%d", outcome, _elapsed_ms(started))
+        outcome = "failed"  # what an escaping error means: recording the run (the app database) can itself fail
+        try:
+            response, outcome = await _run_and_record(request, parsed, row, trace_id, started, run_span)
+        finally:
+            run_span.set_attribute("cohortlens.outcome", outcome)
+            run_span.set_attribute("cohortlens.revision", telemetry.revision())
+            if outcome != "success":
+                run_span.set_status(Status(StatusCode.ERROR))
+            telemetry.record_run(outcome, time.perf_counter() - started)
+            logger.info("run finished outcome=%s duration_ms=%d", outcome, _elapsed_ms(started))
         return response
 
 

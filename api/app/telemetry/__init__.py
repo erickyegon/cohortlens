@@ -14,6 +14,7 @@ Grafana Cloud, with no code change); the standard `OTEL_EXPORTER_OTLP_HEADERS` c
 endpoint nothing is exported, but trace ids still exist so `X-Trace-Id` always works. Tests call `configure` with
 in-memory exporters.
 """
+import copy
 import json
 import logging
 import os
@@ -40,11 +41,33 @@ MASK = "[REDACTED]"
 MAX_ATTRIBUTE_VALUE_LENGTH = 64
 DURATION_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0)
 
-# The only span attributes that may leave the process. No name here may suggest data (the tests check that).
-ALLOWED_SPAN_ATTRIBUTES = frozenset({
-    "http.request.method", "http.route", "http.response.status_code",
-    "cohortlens.outcome", "cohortlens.rule_count", "cohortlens.step_count", "cohortlens.revision",
-})
+HTTP_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "_OTHER"})
+_ROUTE = re.compile(r"^/[A-Za-z0-9_{}\-/]*$")
+_REVISION = re.compile(r"^(?:dev|[0-9a-f]{7,40})$")
+
+
+def safe_method(method: str) -> str:
+    """The HTTP method is client-controlled, so only a closed set is ever exported."""
+    return method if method in HTTP_METHODS else "_OTHER"
+
+
+def _is_int(value, low: int, high: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+# The only span attributes that may leave the process, each with the rule its VALUE must satisfy: being on the list is
+# not enough, or a client-controlled value (the method, a path) would pass through an allowed key. No name here may
+# suggest data (the tests check that).
+_VALUE_RULES = {
+    "http.request.method": lambda v: isinstance(v, str) and v in HTTP_METHODS,
+    "http.route": lambda v: isinstance(v, str) and len(v) <= MAX_ATTRIBUTE_VALUE_LENGTH and bool(_ROUTE.match(v)),
+    "http.response.status_code": lambda v: _is_int(v, 100, 599),
+    "cohortlens.outcome": lambda v: isinstance(v, str) and v in OUTCOMES,
+    "cohortlens.rule_count": lambda v: _is_int(v, 0, 100),
+    "cohortlens.step_count": lambda v: _is_int(v, 0, 100),
+    "cohortlens.revision": lambda v: isinstance(v, str) and bool(_REVISION.match(v)),
+}
+ALLOWED_SPAN_ATTRIBUTES = frozenset(_VALUE_RULES)
 
 
 def environment() -> str:
@@ -56,12 +79,6 @@ def revision() -> str:
 
 
 # ---- the allowlist span processor ---------------------------------------------------------------------------------
-
-def _allowed_value(value) -> bool:
-    if isinstance(value, bool | int | float):
-        return True
-    return isinstance(value, str) and len(value) <= MAX_ATTRIBUTE_VALUE_LENGTH
-
 
 class AllowlistSpanProcessor(SpanProcessor):
     """Wraps another processor and hands it a copy of each ended span with only allowlisted attributes, no events, no
@@ -75,7 +92,7 @@ class AllowlistSpanProcessor(SpanProcessor):
 
     def on_end(self, span: ReadableSpan) -> None:
         attributes = {key: value for key, value in (span.attributes or {}).items()
-                      if key in ALLOWED_SPAN_ATTRIBUTES and _allowed_value(value)}
+                      if key in _VALUE_RULES and _VALUE_RULES[key](value)}
         status = span.status
         clean = ReadableSpan(
             name=span.name, context=span.context, parent=span.parent, resource=span.resource, attributes=attributes,
@@ -93,17 +110,26 @@ class AllowlistSpanProcessor(SpanProcessor):
 
 # ---- redaction ------------------------------------------------------------------------------------------------------
 
+MAX_REDACTION_INPUT = 8192
+_KEYWORDS = r"(?:api[_-]?key|apikey|token|password|passwd|secret)"
+# Every quantifier is bounded, and every pattern starts at a token boundary, so a hostile message costs a few
+# milliseconds, not seconds (the first version was quadratic on long input).
 _SECRET_PATTERNS = [re.compile(pattern, re.IGNORECASE) for pattern in (
-    r"\b[a-z][a-z0-9+.\-]*://[^\s/:@]+:[^\s/@]+@[^\s]+",                    # URL with credentials (connection strings)
-    r"\bbearer\s+[a-z0-9._~+/\-]+=*",                                       # bearer tokens
-    r"\b(?:x-)?(?:api[_-]?key|apikey|token|password|passwd|secret)\s*[:=]\s*[^\s,;&]+",   # key=value secrets
-    r"\b(?:sk|pk|rk)-[a-z0-9_\-]{16,}",                                     # provider-style keys
-    r"\b(?:glsa|glc|ghp|gho|ghs|github_pat|xox[abprs])_?[a-z0-9_\-]{16,}",  # Grafana, GitHub, Slack tokens
-    r"[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}",                             # email addresses
+    r"\b[a-z][a-z0-9+.\-]{1,20}://[^\s/:@]{1,100}:[^\s@]{1,200}@[^\s]{1,300}",           # URL with credentials
+    r"\bbearer\s+[^\s,;\"']{8,200}",                                                       # bearer tokens
+    r"\bbasic\s+[a-z0-9+/=]{12,200}",                                                       # basic auth
+    r"\beyJ[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{5,200}\.[a-z0-9_\-]{0,200}",                   # JWTs
+    r"(?<![a-z0-9])[a-z0-9_\-]{0,40}" + _KEYWORDS + r"[\"']?\s{0,3}[:=]\s{0,3}[\"']?[^\s,;&\"'}]{1,200}",
+    r"\b(?:sk|pk|rk)-[a-z0-9_\-]{16,200}",                                                  # provider-style keys
+    r"\b(?:glsa|glc|ghp|gho|ghs|github_pat|xox[abprs])_?[a-z0-9_\-]{16,200}",              # Grafana, GitHub, Slack
+    r"[\w.%+\-]{1,64}@[\w.\-]{1,255}\.[a-z]{2,24}",                                         # email addresses
 )]
 
 
 def redact(text: str) -> str:
+    """Mask secret-like text. Input beyond `MAX_REDACTION_INPUT` characters is cut and marked, not scanned."""
+    if len(text) > MAX_REDACTION_INPUT:
+        text = text[:MAX_REDACTION_INPUT] + " [TRUNCATED]"
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(MASK, text)
     return text
@@ -139,15 +165,26 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(line, separators=(",", ":"))
 
 
-class _ClassOnlyExceptions(logging.Filter):
-    """The OTLP log handler would attach the exception message and traceback; keep the class name only."""
+_STANDARD_RECORD_FIELDS = (frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__)
+                           | {"message", "asctime", "taskName"})
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if record.exc_info and record.exc_info[0] is not None:
-            record.exc_text = None
-            record.msg = f"{record.msg} exception={record.exc_info[0].__name__}" if record.exc_info[0] else record.msg
-            record.exc_info = None
-        return True
+
+class _SafeLoggingHandler(LoggingHandler):
+    """The OTLP log handler. It exports a COPY of the record (so the record other handlers see is untouched) without any
+    `extra=` fields, which the stock handler would copy out as attributes, and with an exception reduced to its class
+    name (the stock handler would attach the message and the traceback)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        clean = copy.copy(record)
+        for name in list(clean.__dict__):
+            if name not in _STANDARD_RECORD_FIELDS:
+                delattr(clean, name)
+        if clean.exc_info and clean.exc_info[0] is not None:
+            clean.msg = f"{clean.msg} exception={clean.exc_info[0].__name__}"
+            clean.args = None
+        clean.exc_info = None
+        clean.exc_text = None
+        super().emit(clean)
 
 
 # ---- configuration ------------------------------------------------------------------------------------------------
@@ -217,8 +254,7 @@ def configure(*, span_exporter=None, metric_readers=None, log_exporter=None, log
         log_processor = SimpleLogRecordProcessor(log_exporter) if getattr(log_exporter, "_synchronous", True) else \
             BatchLogRecordProcessor(log_exporter)
         logger_provider.add_log_record_processor(log_processor)
-        otlp_handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
-        otlp_handler.addFilter(_ClassOnlyExceptions())
+        otlp_handler = _SafeLoggingHandler(level=logging.INFO, logger_provider=logger_provider)
         otlp_handler.addFilter(RedactingFilter())
         handlers.append(otlp_handler)
 

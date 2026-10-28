@@ -31,7 +31,7 @@ async def trace_header(request: Request, call_next):
     with telemetry.get_tracer().start_as_current_span("http.request") as span:
         trace_id = format(span.get_span_context().trace_id, "032x")
         request.state.trace_id = trace_id
-        span.set_attribute("http.request.method", request.method)
+        span.set_attribute("http.request.method", telemetry.safe_method(request.method))
         try:
             response: Response = await call_next(request)
         except Exception as exc:  # unhandled errors still carry the reference the user quotes, and leave a log line

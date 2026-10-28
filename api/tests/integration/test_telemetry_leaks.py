@@ -121,8 +121,10 @@ def test_nothing_from_the_truth_fixture_or_the_hostile_input_leaves_in_any_span_
         assert birth.strftime("%Y-%m-%d") not in blob and birth.strftime("%Y-%m-%d %H:%M:%S") not in blob
         assert f"{year}-{month:02d}-{day:02d}" not in blob
 
-    # and nothing in it matches a token pattern at all: redacting the whole blob changes nothing
-    assert telemetry.redact(blob) == blob
+    # and no line of it matches a token pattern (a mask in a log line is the only thing allowed to be there): redacting
+    # a line changes nothing, except that already-masked text stays masked
+    for line in blob.splitlines():
+        assert telemetry.redact(line) == line, line
 
 
 def test_the_allowlist_would_catch_a_new_leak_even_if_the_code_added_one(client, exported):
