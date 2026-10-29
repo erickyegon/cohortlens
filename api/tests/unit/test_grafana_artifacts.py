@@ -6,7 +6,8 @@ minutes. Given CohortRunLatencyHigh, then it fires only with at least 20 runs in
 minutes. Given any alert, then it carries service, environment, agent and runbook_url."
 
 The files are Grafana's own JSON (the alert-rule provisioning format and a dashboard model) with three placeholders,
-`__PROMETHEUS_UID__`, `__LOKI_UID__` and `__TEMPO_UID__`, that `infra/grafana/apply.sh` fills in from the stack's real data
+`__PROMETHEUS_UID__`, `__LOKI_UID__` and `__TEMPO_UID__`, that `infra/grafana/apply.sh` fills in from the stack's real
+data
 sources. The queries are checked here as text; their behaviour was checked against a real Prometheus (see the PR).
 """
 import json
@@ -134,5 +135,6 @@ def test_the_dashboard_can_be_filtered_by_environment(dashboard):
 def test_no_file_contains_a_credential_or_a_real_data_source_id():
     for name in ("alert-rules.json", "dashboard.json"):
         text = (GRAFANA / name).read_text(encoding="utf-8")
-        assert not re.search(r"glc_|glsa_|Bearer |Basic [A-Za-z0-9+/=]{12,}|password|@[a-z0-9.-]+\.grafana\.net", text, re.I)
+        pattern = r"glc_|glsa_|Bearer |Basic [A-Za-z0-9+/=]{12,}|password|@[a-z0-9.-]+.grafana.net"
+        assert not re.search(pattern, text, re.I)
         assert "grafanacloud-" not in text  # data sources are looked up at apply time, never hard-coded
