@@ -88,7 +88,7 @@ export interface Run {
   status: "success" | "failed" | "timeout";
   step_counts: StepCount[] | null;
   final_count: Count | null;
-  baseline?: Baseline;
+  baseline?: Baseline | null;
   duration_ms: number | null;
   trace_id: string | null;
   service_version: string | null;

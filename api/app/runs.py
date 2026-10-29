@@ -119,6 +119,8 @@ def _record(cohort_id: uuid.UUID, status: str, trace_id: str, duration_ms: int, 
     """Store the run. `step_counts` and `baseline` hold the suppressed values (a `PublicBaseline` is what the API may
     return, never the exact one); `final_count` the exact number only when it is a real number (a suppressed `"<11"`
     cannot be an integer and the exact small count must not be stored)."""
+    if baseline is not None and not isinstance(baseline, PublicBaseline):
+        raise TypeError("only a suppressed PublicBaseline may be stored")  # never the exact one
     step_counts = [asdict(step) for step in steps] if steps is not None else None
     final = steps[-1].persons if steps else None
     statement = insert(runs_table).values(

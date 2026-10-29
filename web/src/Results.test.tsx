@@ -444,6 +444,23 @@ describe("The run history shows the latest 5 runs and can show all", () => {
     expect(screen.getByRole("button", { name: "Show all (7)" })).toBeInTheDocument();
   });
 
+  it("keeps a run opened with View visible after Show fewer, even when it is older than the 5 shown", async () => {
+    loaded(many(7));
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Show all (7)" }));
+    await user.click(within(bodyRows()[6]).getByRole("button", { name: "View" })); // the oldest run
+    await user.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(bodyRows()).toHaveLength(6); // the 5 newest and the run being shown
+    expect(within(screen.getByRole("table", { name: "Run history" })).getByText(/15:53 UTC/)).toBeInTheDocument();
+  });
+
+  it("says a timed-out run has no baseline too", async () => {
+    loaded([run({ status: "timeout", step_counts: null, final_count: null })]);
+    show();
+    expect(await screen.findByText("A failed or timed-out run has no baseline.")).toBeInTheDocument();
+  });
+
   it("has no toggle when there are 5 runs or fewer", async () => {
     loaded(many(5));
     show();

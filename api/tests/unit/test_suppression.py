@@ -107,3 +107,16 @@ def test_a_public_step_cannot_be_changed_after_it_is_built():
     with pytest.raises(dataclasses.FrozenInstanceError):
         step.persons = 5
 
+
+
+def test_a_run_is_recorded_with_a_public_baseline_only_never_the_exact_one(monkeypatch):
+    """The stored baseline must be the suppressed `PublicBaseline`; a future change that passes the exact `Baseline`
+    to `_record` must fail loudly instead of storing small cells."""
+    import pytest
+
+    from app import runs
+    from app.cohort_engine.baseline import Baseline
+
+    exact = Baseline(age_sex=[], comorbidities=[])
+    with pytest.raises(TypeError):
+        runs._record(None, "success", "trace", 1, [], exact)

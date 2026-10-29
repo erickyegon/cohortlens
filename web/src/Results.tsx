@@ -197,7 +197,8 @@ export function Results({ cohortId, onBack }: Props) {
 
   const shown = runs.find((r) => r.id === selectedId) ?? runs[0] ?? null;
   const shownBaseline = shown?.baseline ?? null; // stored with the run (already suppressed), so it survives a reload
-  const visibleRuns = showAll ? runs : runs.slice(0, HISTORY_PREVIEW);
+  // collapsed, the run being shown stays in the table even when it is older than the newest 5
+  const visibleRuns = runs.filter((r, i) => showAll || i < HISTORY_PREVIEW || r.id === shown?.id);
 
   return (
     <section aria-label="Results">
@@ -268,7 +269,7 @@ export function Results({ cohortId, onBack }: Props) {
             No baseline was kept for this run, which was made before baselines were stored. Run the cohort again to get one.
           </p>
         ) : (
-          <p className={styles.muted}>A failed run has no baseline.</p>
+          <p className={styles.muted}>A failed or timed-out run has no baseline.</p>
         )}
         <p className={styles.note}>{shownBaseline?.comorbidity_note ?? OMITTED_NOTE}</p>
       </section>
