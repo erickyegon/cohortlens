@@ -45,23 +45,23 @@ jobs:
           [ -n "${{ vars.GCP_DEPLOY_SA_DEV }}" ] || { echo "::error::GCP_DEPLOY_SA_DEV is not set"; missing=1; }
           exit $missing
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SA_DEV }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@v3
 
       - name: Let Docker push to Artifact Registry
         run: gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push the api image (tagged with the git sha)
         id: api
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./api
           push: true
@@ -72,7 +72,7 @@ jobs:
 
       - name: Build and push the web image (tagged with the git sha)
         id: web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./web
           push: true

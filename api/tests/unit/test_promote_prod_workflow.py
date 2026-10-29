@@ -26,7 +26,7 @@ def test_promotions_never_overlap_or_get_cancelled_half_way():
 
 
 def test_it_authenticates_as_the_prod_deploy_account_with_workload_identity_and_no_key():
-    assert "id-token: write" in WORKFLOW and "google-github-actions/auth@v2" in WORKFLOW
+    assert "id-token: write" in WORKFLOW and "google-github-actions/auth@v3" in WORKFLOW
     assert "GCP_DEPLOY_SA_PROD" in WORKFLOW and "GCP_RUNTIME_SA_PROD" in WORKFLOW
     assert "GCP_DEPLOY_SA_DEV" not in WORKFLOW and "GCP_RUNTIME_SA_DEV" not in WORKFLOW
     assert "credentials_json" not in WORKFLOW and "secrets." not in WORKFLOW
