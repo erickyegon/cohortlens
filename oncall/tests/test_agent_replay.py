@@ -144,3 +144,22 @@ def test_every_recording_ends_with_the_model_finishing(recording):
 
 def test_the_serving_revision_in_the_fixture_is_the_new_one():
     assert any(item["name"] == NEW and item["traffic_percent"] == 100 for item in FakeBackend().revisions)
+
+
+def test_an_empty_text_block_is_not_sent_back_because_the_api_rejects_it():
+    recording = [{"stop_reason": "tool_use", "content": [
+        {"type": "text", "text": ""},
+        {"type": "tool_use", "id": "t1", "name": "list_revisions", "input": {"service": "api"}}]},
+        {"stop_reason": "end_turn", "content": [{"type": "text", "text": "done"}]}]
+    tools = Tools(LIVE, FakeBackend(), ALERT, 42, now=lambda: NOW)
+    client = ReplayClient(recording)
+    run_agent(ALERT, tools, client, model="test-model")
+    assistant = client.requests[1]["messages"][1]["content"]
+    assert [block["type"] for block in assistant] == ["tool_use"]
+
+
+def test_a_reply_cut_off_by_the_token_limit_is_not_a_finished_run():
+    recording = [{"stop_reason": "max_tokens", "content": [{"type": "text", "text": "I was saying"}]}]
+    tools = Tools(LIVE, FakeBackend(), ALERT, 42, now=lambda: NOW)
+    result = run_agent(ALERT, tools, ReplayClient(recording), model="test-model")
+    assert not result.finished

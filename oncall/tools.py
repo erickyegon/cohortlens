@@ -71,7 +71,10 @@ def _choice(value, allowed, field):
 
 def clean_text(text: str, limit: int = SUMMARY_LIMIT) -> str:
     """Plain text for the incident issue: no control characters, no @mentions that would notify strangers."""
-    return _CONTROL.sub("", text).replace("@", "＠")[:limit]
+    text = _CONTROL.sub('', text).replace('@', chr(0xff20))
+    # the rollback history and the incident lookup are read back from HTML-comment markers: the model's text
+    # must not be able to contain one
+    return text.replace('<!--', '< !--').replace('-->', '-- >')[:limit]
 
 
 class Tools:

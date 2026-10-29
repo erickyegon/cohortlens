@@ -11,12 +11,15 @@ import re
 import subprocess
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 METRIC = "cohortlens_cohort_runs_total"
 DURATION = "cohortlens_cohort_run_duration_seconds_bucket"
 INCIDENT_LABEL = "incident"
 ROLLBACK_MARKER = re.compile(r"<!-- oncall-rollback service=(api|web) env=(dev|prod) at=([0-9T:.+Z-]+) -->")
+# comments made with the workflow's token; anyone else's markers are ignored (a public repository takes any comment)
+BOT_LOGINS = frozenset({"github-actions", "github-actions[bot]"})
+CLOCK_SKEW = timedelta(minutes=5)
 _ENV = re.compile(r"dev|prod")
 _VERSION = re.compile(r"[0-9a-f]{7,40}")
 _SERVICE = re.compile(r"api|web")
@@ -55,8 +58,9 @@ def promql(metric: str, window: str, environment: str) -> str:
 
 
 class LiveBackend:
-    def __init__(self, env, run=_run, fetch=_fetch):
+    def __init__(self, env, run=_run, fetch=_fetch, clock=None):
         self._run, self._fetch = run, fetch
+        self._clock = clock or (lambda: datetime.now(UTC))
         self.project = self._need(env, "PROJECT_ID", _PROJECT)
         self.region = self._need(env, "REGION", _REGION)
         self.repo = self._need(env, "GITHUB_REPOSITORY", _REPO)
@@ -132,11 +136,16 @@ class LiveBackend:
         done = self._run(command)
         tail = (done.stdout + done.stderr).strip().splitlines()[-3:]
         ok = done.returncode == 0
+        detail = " | ".join(tail)[:450]
         if ok and incident:
-            moment = datetime_now_iso()
-            self._comment(incident, f"<!-- oncall-rollback service={service} env={environment} at={moment} -->\n"
-                                    f"On-call agent rolled {service} back to {revision} in {environment}.")
-        return {"ok": ok, "detail": " | ".join(tail)[:500]}
+            moment = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                self._comment(incident, f"<!-- oncall-rollback service={service} env={environment} at={moment} -->\n"
+                                        f"On-call agent rolled {service} back to {revision} in {environment}.")
+            except RuntimeError:
+                # the traffic did move: report success, but say the one-per-hour limit may not see this rollback
+                detail += " | warning: the marker comment failed, so the hourly limit may not see this rollback"
+        return {"ok": ok, "detail": detail}
 
     # ---- GitHub incident issue --------------------------------------------------------------------------------------
 
@@ -154,21 +163,32 @@ class LiveBackend:
         if self._run_url:
             text += f"\nRun: {self._run_url}\n"
         self._comment(incident, text)
-        if status == "escalated":
-            self._gh("issue", "edit", str(int(incident)), "--add-label", "needs-human")
+        label = {"escalated": "needs-human", "resolved": "resolved-by-agent"}.get(status)
+        if label:
+            try:
+                self._gh("issue", "edit", str(int(incident)), "--add-label", label)
+            except RuntimeError:
+                pass  # a missing label must not stop the comment (already posted) or the close below
         if status == "resolved":
-            self._gh("issue", "edit", str(int(incident)), "--add-label", "resolved-by-agent")
             self._gh("issue", "close", str(int(incident)))
 
     def rollback_history(self, environment, service):
         listing = json.loads(self._gh("issue", "list", "--label", INCIDENT_LABEL, "--state", "all", "--limit", "30",
                                       "--json", "comments"))
-        moments = []
+        moments, latest = [], self._clock() + CLOCK_SKEW
         for issue in listing:
             for comment in issue.get("comments", []):
+                if ((comment.get("author") or {}).get("login")) not in BOT_LOGINS:
+                    continue
                 for found_service, found_env, stamp in ROLLBACK_MARKER.findall(comment.get("body", "")):
-                    if found_service == service and found_env == environment:
-                        moments.append(datetime.fromisoformat(stamp.replace("Z", "+00:00")))
+                    if found_service != service or found_env != environment:
+                        continue
+                    try:
+                        moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if moment.tzinfo is not None and moment <= latest:
+                        moments.append(moment)
         return moments
 
     def find_incident(self, fingerprint):
@@ -185,7 +205,3 @@ class LiveBackend:
                        "--label", INCIDENT_LABEL, "--body-file", "-", input_text=body)
         return int(out.strip().rsplit("/", 1)[-1])
 
-
-def datetime_now_iso() -> str:
-    from datetime import UTC
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

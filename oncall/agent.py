@@ -49,7 +49,7 @@ def alert_message(alert: Alert, incident: int) -> str:
 def _block(raw) -> dict | None:
     kind = getattr(raw, "type", None)
     if kind == "text":
-        return {"type": "text", "text": str(raw.text)}
+        return {"type": "text", "text": str(raw.text)} if str(raw.text).strip() else None  # the API rejects empty text
     if kind == "tool_use":
         return {"type": "tool_use", "id": str(raw.id), "name": str(raw.name), "input": raw.input}
     return None
@@ -68,7 +68,8 @@ def run_agent(alert: Alert, tools: Tools, client, *, model: str) -> Result:
         content = [block for block in (_block(item) for item in response.content) if block]
         messages.append({"role": "assistant", "content": content})
         if response.stop_reason != "tool_use":
-            return Result(True, turn, messages)
+            # only a natural end is a finished run; a reply cut off by the token limit is not
+            return Result(response.stop_reason == "end_turn", turn, messages)
         answers = []
         for block in content:
             if block["type"] == "tool_use":

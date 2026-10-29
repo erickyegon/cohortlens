@@ -28,7 +28,7 @@ up once, how to run the drill, and what is **not** built.
 - **Allowlist:** four tools; anything else is refused and the model is told so.
 - **Environments:** only those in the repository variable `ONCALL_ENVIRONMENTS` (none by default). The workflow additionally refuses `prod` (see "Not built").
 - **Dry run unless `DRY_RUN=false`:** the model and the read tools run for real; the two write tools record the call and do nothing.
-- **Rollback only to** an existing revision of that service that is **not serving** and has **at least 50 successful runs** (counted from the metrics by git version over 7 days); **at most one rollback per service per hour** (history from markers in incident comments; a future-dated marker counts).
+- **Rollback only to** an existing revision of that service that is **not serving** and whose **git version has at least 50 successful runs in the last 7 days** (counted from the metrics; the count is per version, not per revision, and says nothing about recent health, so the model is also told to check the error ratio); **at most one rollback per service per hour**. The hour is read from markers in incident comments, and **only comments made by the workflow's own account count** (a public repository takes anyone's comment); malformed, zoneless or far-future markers are ignored, and the model's text cannot contain a marker (`<!--` and `-->` are stripped).
 - **Untrusted data:** tool results are wrapped as untrusted data and the system prompt says so, but the protection is the code above, not the prompt: a model that is talked into a dangerous call is refused (`oncall/tests/recordings/hostile.json`). Summaries are cut to 1,500 characters, stripped of control characters, and `@` is replaced so a comment cannot notify strangers.
 - **Tests never call the real Anthropic API.** The agent is replayed from recorded responses (`oncall/tests/recordings/`); the SDK is imported only in `oncall/__main__.py`. Decisions covered: bad deploy (rolls back), database outage (escalates, no rollback), hostile output (everything refused).
 
@@ -44,7 +44,8 @@ up once, how to run the drill, and what is **not** built.
    ```
 
    Contact point: URL `https://api.github.com/repos/erickyegon/cohortlens/dispatches`, HTTP method POST, Authentication Header Scheme `Bearer`, Credentials = the token, Custom Payload template `{{ template "github.dispatch" . }}`. The token is a **fine-grained personal access token** limited to this repository with **Contents: Read and write** (what `repository_dispatch` needs), expiring in 30 days. It lives only in Grafana's contact point.
-5. **Test it with the contact point's Test button**, then a dry-run drill, then `ONCALL_DRY_RUN=false`.
+5. **Notification policy:** a child policy matching `agent = oncall`, contact point `github-oncall`, **group by `alertname` and `environment`** (the template sends one alert per notification: the first in the group, so a group holding two alerts would lose one), group wait 30 s, repeat interval 12 h. Leave "Disable resolved message" off: the resolved notification is what closes the incident.
+6. **The contact point's Test button** sends a synthetic alert without an `environment` label, so the workflow starts and **refuses** it (exit 2). That proves delivery, not behaviour. Then a dry-run dispatch from the Actions tab, then `ONCALL_DRY_RUN=false`.
 
 ## Drill S1 on dev (`make chaos SCENARIO=s1`, `chaos/s1.sh`)
 
@@ -61,4 +62,5 @@ A bad release is promoted, the alert fires, the agent rolls back, the alert clea
 - **A revert PR** (issue #26) and **query_logs, query_traces, recent_changes** (issue #25). The four tools above are the lean set the owner chose.
 - **Scenario S2** (latency regression), the demo recording, and the 10-minute recovery verification before a postmortem: recovery is shown by the alert resolving and the incident closing.
 - **`agent=enabled`** in the issue text: the rules carry `agent=oncall`. A dev alert is not email-only; the workflow decides by `ONCALL_ENVIRONMENTS`.
+- **Alert storms:** the workflow's concurrency group keeps one running and one pending run; a third event replaces the pending one, so during a storm a firing or resolved event can be dropped. Acceptable for the drill; a queue would need an external service.
 - **Real model behaviour is not covered by tests.** The replay tests pin the guardrails and the loop; whether the live model makes the right call is shown only by the dry-run and the real drill.

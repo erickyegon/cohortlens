@@ -1,6 +1,7 @@
 """Issue #25: the real backend builds exactly the commands and queries it should. A fake runner and a fake HTTP fetch
 stand in for gcloud, gh, bash and Grafana; the first real run is a dry run on dev (docs/oncall.md)."""
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -26,8 +27,12 @@ class Runner:
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
 
+FIXED_NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+
+
 def backend(runner=None, fetch=None):
-    return LiveBackend(ENV, run=runner or Runner(), fetch=fetch or (lambda url, headers: {}))
+    return LiveBackend(ENV, run=runner or Runner(), fetch=fetch or (lambda url, headers: {}),
+                       clock=lambda: FIXED_NOW)
 
 
 @pytest.mark.parametrize("name", ["PROJECT_ID", "REGION", "GITHUB_REPOSITORY", "GRAFANA_URL"])
@@ -129,11 +134,12 @@ def test_rollback_refuses_an_unvalidated_target(revision):
 
 
 def test_rollback_history_reads_only_markers_for_the_same_service_and_environment():
+    bot = {"login": "github-actions"}
     issues = [{"comments": [
-        {"body": "<!-- oncall-rollback service=api env=dev at=2026-10-29T11:00:00Z -->\nrolled back"},
-        {"body": "<!-- oncall-rollback service=web env=dev at=2026-10-29T11:30:00Z -->"},
-        {"body": "<!-- oncall-rollback service=api env=prod at=2026-10-29T11:45:00Z -->"},
-        {"body": "ignore me: oncall-rollback service=api env=dev at=2026-10-29T11:50:00Z"}]}]
+        {"author": bot, "body": "<!-- oncall-rollback service=api env=dev at=2026-10-29T11:00:00Z -->"},
+        {"author": bot, "body": "<!-- oncall-rollback service=web env=dev at=2026-10-29T11:30:00Z -->"},
+        {"author": bot, "body": "<!-- oncall-rollback service=api env=prod at=2026-10-29T11:45:00Z -->"},
+        {"author": bot, "body": "ignore me: oncall-rollback service=api env=dev at=2026-10-29T11:50:00Z"}]}]
     runner = Runner({"issue list": (0, json.dumps(issues))})
     moments = backend(runner).rollback_history("dev", "api")
     assert [moment.isoformat() for moment in moments] == ["2026-10-29T11:00:00+00:00"]
@@ -169,3 +175,59 @@ def test_open_incident_creates_a_labelled_issue_with_the_fingerprint_marker_and_
     assert backend(runner).open_incident(alert) == 77
     command, body = runner.calls[0]
     assert "--label" in command and "incident" in command and "<!-- oncall-fingerprint:3f9a1c2b7d8e4f50 -->" in body
+
+
+# ---- review findings of #75 ----------------------------------------------------------------------------------------
+
+BOT = {"login": "github-actions"}
+
+
+def history_of(comments):
+    issues = [{"comments": comments}]
+    return backend(Runner({"issue list": (0, json.dumps(issues))})).rollback_history("dev", "api")
+
+
+def marker(stamp):
+    return f"<!-- oncall-rollback service=api env=dev at={stamp} -->"
+
+
+def test_a_marker_written_by_anyone_but_the_workflow_is_ignored():
+    """Otherwise any commenter on a public repo could block every rollback (or fake one)."""
+    comments = [{"author": {"login": "someone-else"}, "body": marker("2026-10-29T11:59:00Z")},
+                {"author": None, "body": marker("2026-10-29T11:58:00Z")}, {"body": marker("2026-10-29T11:57:00Z")}]
+    assert history_of(comments) == []
+
+
+@pytest.mark.parametrize("stamp", ["----", "2026-10-29T10:00:00", "2026-10-29", "2026-13-45T99:99:99Z"])
+def test_a_malformed_or_zoneless_stamp_is_skipped_not_an_error(stamp):
+    assert history_of([{"author": BOT, "body": marker(stamp)}]) == []
+
+
+def test_a_stamp_far_in_the_future_is_ignored_but_a_valid_one_beside_it_still_counts():
+    comments = [{"author": BOT, "body": marker("2999-01-01T00:00:00Z")},
+                {"author": BOT, "body": marker("2026-10-29T11:00:00Z")}]
+    assert [moment.isoformat() for moment in history_of(comments)] == ["2026-10-29T11:00:00+00:00"]
+
+
+def test_a_failure_to_post_the_marker_does_not_turn_a_successful_rollback_into_an_error():
+    class NoComments(Runner):
+        def __call__(self, command, input_text=None, timeout=900):
+            if command[:3] == ["gh", "issue", "comment"]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="rate limited")
+            return super().__call__(command, input_text, timeout)
+
+    runner = NoComments({"rollback.sh": (0, "moved")})
+    outcome = backend(runner).rollback("dev", "api", "cohortlens-api-dev-00006-ok1", 42)
+    assert outcome["ok"] is True and "marker" in outcome["detail"]
+
+
+def test_a_label_that_cannot_be_added_does_not_stop_the_comment_or_the_close():
+    class NoLabels(Runner):
+        def __call__(self, command, input_text=None, timeout=900):
+            if command[:3] == ["gh", "issue", "edit"]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="no such label")
+            return super().__call__(command, input_text, timeout)
+
+    runner = NoLabels()
+    backend(runner).comment_incident(42, "alert resolved", "resolved")
+    assert any(call[0][:3] == ["gh", "issue", "close"] for call in runner.calls)

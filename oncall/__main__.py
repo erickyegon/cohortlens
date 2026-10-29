@@ -57,7 +57,13 @@ def main(env=None, backend_factory=LiveBackend, client_factory=_anthropic_client
     else:
         incident = backend.find_incident(alert.fingerprint) or backend.open_incident(alert)
     tools = Tools(policy, backend, alert, incident, now)
-    result = run_agent(alert, tools, client_factory(), model=env.get("ONCALL_MODEL", DEFAULT_MODEL))
+    try:
+        result = run_agent(alert, tools, client_factory(), model=env.get("ONCALL_MODEL", DEFAULT_MODEL))
+    except Exception:
+        # the model could not be reached or answered badly: a person must still be told on the incident
+        if not policy.dry_run:
+            backend.comment_incident(incident, FALLBACK, "escalated")
+        raise
     for call in tools.calls:
         outcome = "ok"
         if call["refused"]:

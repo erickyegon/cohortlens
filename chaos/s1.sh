@@ -81,6 +81,18 @@ restore() {
   echo "restoring ${GOOD}"
   gcloud run services update-traffic "$SERVICE" "${G[@]}" --to-revisions="${GOOD}=100" > /dev/null
 }
+# Once the fault is injected, ANY way out of this script (an error, Ctrl-C, a terminated job) restores the healthy
+# revision unless the agent has already moved the traffic.
+ARMED=0 TRAFFIC=""
+cleanup() {
+  local code=$?
+  trap - EXIT
+  if [ -n "$TRAFFIC" ]; then kill "$TRAFFIC" 2> /dev/null || true; fi
+  if (( ARMED )); then restore || echo "WARNING: could not restore ${GOOD}; run: gcloud run services update-traffic ${SERVICE} --to-revisions=${GOOD}=100 --region ${REGION} --project ${PROJECT_ID}" >&2; fi
+  exit "$code"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 echo "== 1. warm-up: 60 successful runs on the healthy revision"
 "$PYTHON" "$LOADGEN" --url "$API_URL" --count 60 --interval 2 | tail -2
@@ -89,30 +101,29 @@ sleep 120
 
 echo "== 2. inject the fault: same image, CHAOS_FAULT=fail_runs, version ${BAD_VERSION:0:7}"
 SUFFIX="s1-$(date -u +%H%M%S)"
+ARMED=1
 gcloud run services update "$SERVICE" "${G[@]}" --revision-suffix "$SUFFIX" \
   --update-env-vars "CHAOS_FAULT=fail_runs,SERVICE_VERSION=${BAD_VERSION}" > /dev/null
 BAD="$(serving)"
-[ -n "$BAD" ] && [ "$BAD" != "$GOOD" ] || { echo "error: the bad revision is not serving; restoring"; restore; exit 1; }
+[ -n "$BAD" ] && [ "$BAD" != "$GOOD" ] || { echo "error: the bad revision is not serving"; exit 1; }
 echo "bad revision serving: ${BAD}"
 
 echo "== 3. traffic for up to ${MINUTES} minutes; waiting for the agent to move it"
 COUNT=$(( MINUTES * 5 ))
 "$PYTHON" "$LOADGEN" --url "$API_URL" --count "$COUNT" --interval 12 > "${TMPDIR:-/tmp}/s1-traffic.log" 2>&1 &
 TRAFFIC=$!
-trap 'kill $TRAFFIC 2> /dev/null || true' EXIT
 DEADLINE=$(( $(date +%s) + MINUTES * 60 )) NOW_SERVING="$BAD"
 while (( $(date +%s) < DEADLINE )); do
-  NOW_SERVING="$(serving)"
+  NOW_SERVING="$(serving || true)"
   if [ -n "$NOW_SERVING" ] && [ "$NOW_SERVING" != "$BAD" ]; then break; fi
   sleep 30
 done
 
 if [ "$NOW_SERVING" = "$BAD" ] || [ -z "$NOW_SERVING" ]; then
-  echo "RESULT: FAILED. The agent did not move the traffic within ${MINUTES} minutes."
-  kill $TRAFFIC 2> /dev/null || true
-  restore
+  echo "RESULT: FAILED. The agent did not move the traffic within ${MINUTES} minutes (the healthy revision is restored on exit)."
   exit 1
 fi
+ARMED=0
 echo "agent moved the traffic: now serving ${NOW_SERVING} (was ${BAD})"
 [ "$NOW_SERVING" = "$GOOD" ] || echo "note: that is not the healthy revision I started from (${GOOD})"
 
@@ -122,6 +133,5 @@ RECENT="$(tail -5 "${TMPDIR:-/tmp}/s1-traffic.log" | grep -c 'HTTP 201' || true)
 echo "last five runs: ${RECENT} succeeded (HTTP 201)"
 gh issue list --label incident --state all --limit 3 --json number,title,state,labels \
   --jq '.[] | "incident #\(.number) [\(.state)] \(.title) labels: \([.labels[].name] | join(","))"'
-kill $TRAFFIC 2> /dev/null || true
 if (( RECENT >= 4 )); then echo "RESULT: OK. Check Grafana for the alert returning to Normal and the incident closing."; else
   echo "RESULT: the agent rolled back but runs are not succeeding yet; look at ${NOW_SERVING}"; exit 1; fi

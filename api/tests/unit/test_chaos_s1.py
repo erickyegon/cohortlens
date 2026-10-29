@@ -54,3 +54,10 @@ def test_bad_arguments_or_settings_are_refused_before_any_cloud_call(tmp_path, a
 def test_it_touches_only_the_dev_api_service():
     text = SCRIPT.read_text(encoding="utf-8")
     assert 'SERVICE="cohortlens-api-dev"' in text and "cohortlens-api-prod" not in text and "-prod" not in text
+
+
+def test_the_healthy_revision_is_restored_on_any_exit_after_the_fault_is_injected():
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "trap cleanup EXIT" in text and "trap 'exit 130' INT TERM" in text
+    assert text.index("ARMED=1") < text.index("--update-env-vars") and "ARMED=0" in text
+    assert 'NOW_SERVING="$(serving || true)"' in text

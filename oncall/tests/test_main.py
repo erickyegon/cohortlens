@@ -1,6 +1,8 @@
 """Issue #24 and #26: the workflow entry point, with fakes for the backend and the model."""
 import json
 
+import pytest
+
 from oncall.__main__ import main
 from oncall.tests.conftest import NOW, OLD, FakeBackend, ReplayClient, load_recording
 
@@ -89,3 +91,17 @@ def test_a_model_that_hits_the_turn_limit_fails_the_run_but_still_escalates():
     client = ReplayClient(endless)
     code = main(env, backend_factory=lambda _env: backend, client_factory=lambda: client, now=lambda: NOW)
     assert code == 1 and [status for _, status, _ in backend.comments] == ["escalated"]
+
+
+def test_if_the_model_call_itself_fails_the_incident_is_still_escalated_and_the_error_propagates():
+    class Down:
+        class messages:  # noqa: N801 - mimics the SDK's attribute
+            @staticmethod
+            def create(**_request):
+                raise ConnectionError("api unreachable")
+
+    backend = IncidentBackend()
+    env = {"ALERT_PAYLOAD": json.dumps(FIRING), "ONCALL_ENVIRONMENTS": "dev", "DRY_RUN": "false"}
+    with pytest.raises(ConnectionError):
+        main(env, backend_factory=lambda _env: backend, client_factory=Down, now=lambda: NOW)
+    assert [status for _, status, _ in backend.comments] == ["escalated"]
