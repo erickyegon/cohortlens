@@ -65,7 +65,7 @@ Status: **done**, **partial**, **not started**. Links are to PRs and issues (mer
 |---|---|---|
 | Spec | done | [docs/spec.md](spec.md); issue [#1](https://github.com/erickyegon/cohortlens/issues/1) |
 | Public board with about 24 issues | done | 31 issues, 17 closed (verified); board public. Handoff labels were not used (section 2, row 2). |
-| AGENTS.md and docs skeleton | done | [AGENTS.md](../AGENTS.md); `docs/*.md`. ADRs 002 to 005 and several docs are still skeletons. |
+| AGENTS.md and docs skeleton | done | [AGENTS.md](../AGENTS.md); `docs/*.md`. At the audit, ADRs 002 to 005 and several docs were skeletons (ADR-002 since written in #60, ADRs 003 to 005 in #80; the runbooks were not re-checked). |
 | Agent definitions | done | `.claude/agents/` (5 files) |
 
 ### Phase 2: data and engine: **done**
@@ -235,7 +235,7 @@ All verified from the GitHub API at audit time.
 | Fresh-clone run | **done and verified today** (smoke OK; reference cohort 481) |
 | Public board | **done** (public, 56 items); hygiene fixes pending |
 | Process walkthrough | **partial** (`docs/process.md`, issues #2 to #4; the deploy step now has real evidence in the issues and PRs of E4 but is not written up) |
-| Live URLs (dev and prod) | **done** *(updated after E4)*: dev and prod web and API URLs are in the update block at the top; not yet in the README |
+| Live URLs (dev and prod) | **done** *(updated after E4)*: dev and prod web and API URLs are in the update block at the top and, since #80, in the README |
 | Dashboard screenshots | **partly**: the owner has screenshots of the metric, trace and log; the dashboard itself has not been screenshotted |
 | Leak test | **done** (`api/tests/integration/test_telemetry_leaks.py`, in CI) |
 | Alert rules as code | **done** (`infra/grafana/alert-rules.json`, applied; not yet seen firing) |
