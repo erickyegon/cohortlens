@@ -34,13 +34,13 @@ All data is synthetic. No real patient information ever exists in the system.
 | US-2 | As an RWE scientist, I can define a cohort (index event, age range, observation window, include/exclude rules) and save it. |
 | US-3 | As an RWE scientist, I get immediate validation errors for impossible definitions. |
 | US-4 | As an RWE scientist, I can run feasibility for a saved cohort and see the final count and the count after each step. |
-| US-5 | As an RWE scientist, I see a baseline table (age bands, sex, top comorbidities) for the final cohort. |
+| US-5 | As an RWE scientist, I see a baseline table (age bands, sex, the most common comorbidities) for the final cohort. A condition with fewer than 11 patients is never named. |
 | US-6 | As an RWE scientist, I can reopen a saved cohort, edit a criterion, and re-run it. |
 | US-7 | As an RWE scientist, I can see the run history of a cohort. |
 | US-8 | As an RWE scientist, small counts are masked so no individual can be singled out. |
 | US-9 | As an RWE scientist, when a run fails I see a reference ID I can give to support. |
 | US-10 | As an on-call engineer, I am alerted when cohort runs fail or slow down, and the alert links to a runbook. |
-| US-11 | As an on-call engineer, a faulty release is rolled back automatically and the incident is documented. |
+| US-11 | As an on-call engineer, a faulty release is rolled back automatically (on dev; prod stays with a person) and the incident is documented. |
 | US-12 | As a developer, I can start the whole stack locally with one command. |
 
 ## 4. Functional requirements
@@ -54,15 +54,15 @@ All data is synthetic. No real patient information ever exists in the system.
 | FR-5 | Validation rejects: age_min > age_max, empty concept lists, windows where start is after end, more than 10 rules. Rejection happens before any SQL runs. | US-3 |
 | FR-6 | `POST /api/cohorts/{id}/runs` compiles the definition into one parameterized SQL query and returns the count after every step in a single round trip. | US-4 |
 | FR-7 | Descendant expansion uses the concept ancestor table. | US-4 |
-| FR-8 | Each run is persisted with status, step counts, final count, duration, trace ID and service version. | US-4, US-7 |
-| FR-9 | The baseline table (age bands, sex, top 10 comorbidities) is computed for the final cohort. | US-5 |
-| FR-10 | Any count from 1 to 10 is returned as `"<11"`. Zero stays `0`. | US-8 |
+| FR-8 | Each run is persisted with status, step counts (the suppressed values), final count (only when it is a real number), duration, trace ID and service version. **The baseline is returned with the run but not stored**, so the run history shows counts only. | US-4, US-7 |
+| FR-9 | The baseline table is computed for the final cohort: a complete age-band by sex grid (suppressed cell by cell) and up to 10 comorbidities, the most common first. Conditions recorded on or before the index date count. Comorbidities with fewer than 11 patients are **left out**, not masked, and a constant note says so; the list can be shorter than ten or empty. | US-5 |
+| FR-10 | Any step count or baseline age/sex cell from 1 to 10 is returned as `"<11"`. Zero stays `0`. Comorbidities are the exception: a condition under 11 patients is omitted rather than shown as `"<11"`, because a masked row would still name the condition. | US-8 |
 | FR-11 | No endpoint returns patient-level rows. | US-8 |
 | FR-12 | Every response carries an `X-Trace-Id` header; failed runs show "Something went wrong. Reference: <trace id>". | US-9 |
 | FR-13 | `GET /healthz` (liveness), `GET /readyz` (readiness incl. database check) and `GET /version` (the commit the revision runs; Cloud Run reserves `/healthz` on its public URL, so deploy checks use `/version`). | US-10 |
 | FR-14 | Queries are cancelled after a 10 s statement timeout. | US-4 |
 | FR-15 | The UI provides a cohort list, a builder (with reorderable rules) and a results screen with waterfall chart, baseline table and run history. | US-2, US-4–7 |
-| FR-16 | Alert rules on run error rate and p95 latency route prod incidents to the on-call agent. | US-10, US-11 |
+| FR-16 | Alert rules on run error rate and p95 latency carry `agent=oncall` and start the on-call agent. The agent acts **on dev only**; prod incidents are not handled by it (the prod path is not built, by design: `docs/oncall.md`). | US-10, US-11 |
 | FR-17 | `docker compose up --build` starts frontend, API, database (auto-seeded) and local telemetry stack. | US-12 |
 
 ## 5. Non-functional requirements
@@ -94,7 +94,8 @@ All data is synthetic. No real patient information ever exists in the system.
 - Given the database is unreachable, then I see an error with a trace reference and the run is recorded as failed.
 
 **US-5 Baseline**
-- Given a completed run, then I see counts by age band and sex and the ten most common comorbidities, all subject to suppression.
+- Given a completed run, then I see counts by age band and sex (a cell of 1 to 10 shows "<11") and up to ten of the most common comorbidities, each with an exact count of at least 11.
+- Given a condition with fewer than 11 patients in the cohort, then it is not listed, and the note "Conditions with fewer than 11 patients are not shown." is shown with the table.
 
 **US-6 Edit and re-run**
 - Given a cohort with a previous run, when I change a criterion and re-run, then a new run is added and the earlier run is kept in history.

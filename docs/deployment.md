@@ -133,7 +133,7 @@ It builds nothing, deploys nothing, deletes nothing and touches no IAM.
 
 **Rolling forward again.** A rollback pins the traffic to the chosen revision. The next dev deploy (or prod promotion) puts the new revision back in charge (`update-traffic --to-latest`). To go back sooner, run **Rollback** again with `revision` set to the newer revision.
 
-**Verified against the real project:** a `--dry-run` for dev `api` and `web` (it reads the real revisions and traffic and moves nothing). That run found a bug (Windows `gcloud` prints CRLF line endings, so revision names carried a trailing carriage return), now fixed and tested. **No real traffic move has been run yet.**
+**Verified against the real project:** a `--dry-run` for dev `api` and `web` (it reads the real revisions and traffic and moves nothing). That run found a bug (Windows `gcloud` prints CRLF line endings, so revision names carried a trailing carriage return), now fixed and tested. **Real traffic moves have since run on dev:** [run 40727516793](https://github.com/erickyegon/cohortlens/actions/runs/40727516793) (by hand) and the on-call agent's rollback in drill S1 ([run 40894738766](https://github.com/erickyegon/cohortlens/actions/runs/40894738766)). No prod rollback has been run.
 
 ## Telemetry export (optional)
 

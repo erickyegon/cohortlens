@@ -1,9 +1,9 @@
 # Testing
 
 - `make test`: pytest unit + integration (Testcontainers, Postgres 18), telemetry leak test, Vitest, agent replay tests.
-- `make e2e`: Playwright against Compose (separate CI job).
+- `make e2e`: Playwright against Compose. **Not built yet:** the Makefile target is a TODO that exits 1 and CI has no e2e job (issue #32).
 - `make verify-seed`: load the committed seed into a throwaway Postgres 18 container and assert the reference cohort (920 → 481).
-- Quality gates: 80% line coverage on `api/app/cohort_engine/`; Ruff + ESLint clean; no real Anthropic API calls.
+- Quality gates enforced by CI: Ruff and ESLint clean, `tsc` and the web build clean. By convention, not by a check: no real Anthropic API calls (the on-call agent is tested by replaying recorded responses). **There is no coverage gate:** an earlier version of this page promised 80% line coverage on `api/app/cohort_engine/`, but nothing measured or enforced it, so the claim was removed. Coverage can be looked at by hand with `pytest-cov` (not a project dependency).
 - Dev dependencies: `pip install -r api/requirements-dev.txt` (Docker required for Testcontainers).
 
 ## CI

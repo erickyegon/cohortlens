@@ -6,12 +6,12 @@ Status: accepted · Date: 2026-10-28
 CohortLens needs a live URL, a Postgres database that holds the OMOP seed, a deploy path with a human approval before production, and a rollback that takes seconds. The budget is a few dollars a month at most (a $5 budget alert is set), and the project is a demo on synthetic data.
 
 ## Decision
-- **Cloud Run** runs the API and the web container, in `us-east5`, next to the database. Revisions are immutable and traffic can be moved between them, so a rollback is a traffic shift, not a rebuild (the rollback design is recorded in ADR-004, still to be written).
+- **Cloud Run** runs the API and the web container, in `us-east5`, next to the database. Revisions are immutable and traffic can be moved between them, so a rollback is a traffic shift, not a rebuild (the rollback design is recorded in [ADR-004](004-rollback-by-traffic-shift.md)).
 - **Neon** hosts Postgres 18 (AWS US East 2, project `cohortlens`) with two branches, `production` and `dev`. CI, the local Compose stack and the tests run Postgres 18 too, so the engine is tested on the version it runs on.
 - **Render was the alternative and was rejected** for two reasons on its free tier, and Cloud Run won on a third:
   - Free web services **sleep after 15 minutes idle and take about a minute to wake**. A sleeping service would trigger false latency alerts and break the latency target.
   - Free Postgres **expires after 30 days**, so the database would be offline during peer review.
-  - Cloud Run was chosen for its **built-in rollback by traffic shift between revisions** (see ADR-004, still to be written).
+  - Cloud Run was chosen for its **built-in rollback by traffic shift between revisions** (see [ADR-004](004-rollback-by-traffic-shift.md)).
 - **Deploys from GitHub Actions use workload identity federation**, so there are no long-lived key files.
 - **One Google Cloud project holds both environments** (dev and prod services side by side).
 
@@ -26,7 +26,7 @@ Reasoning:
 Mitigations:
 - **Prod is protected by the approval gate.** Production deploys run from the GitHub `production` environment, which needs a human approval, and promote the **same image digest** that ran in dev. (The gate is built in E4; until it exists, nothing deploys to prod.)
 - Rollback is a traffic shift to a previous revision, so a bad revision is undone without a rebuild.
-- The on-call agent may roll back at most once per service per hour, and only from an action allowlist (stated in `.claude/agents/sre.md`; ADR-005 will record it).
+- The on-call agent may roll back at most once per service per hour, and only from an action allowlist (stated in `.claude/agents/sre.md` and recorded in [ADR-005](005-oncall-agent-guardrails.md)).
 
 Revisit this decision if the service ever holds real data or has users beyond the demo.
 
