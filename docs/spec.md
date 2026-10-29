@@ -54,14 +54,14 @@ All data is synthetic. No real patient information ever exists in the system.
 | FR-5 | Validation rejects: age_min > age_max, empty concept lists, windows where start is after end, more than 10 rules. Rejection happens before any SQL runs. | US-3 |
 | FR-6 | `POST /api/cohorts/{id}/runs` compiles the definition into one parameterized SQL query and returns the count after every step in a single round trip. | US-4 |
 | FR-7 | Descendant expansion uses the concept ancestor table. | US-4 |
-| FR-8 | Each run is persisted with status, step counts (the suppressed values), final count (only when it is a real number), duration, trace ID and service version. **The baseline is returned with the run but not stored**, so the run history shows counts only. | US-4, US-7 |
+| FR-8 | Each run is persisted with status, step counts (the suppressed values), final count (only when it is a real number), duration, trace ID and service version. The baseline is stored with the run **after suppression** (so it survives a reload) and returned with each run in the history; a failed run, and a run made before baselines were stored, has none. | US-4, US-7 |
 | FR-9 | The baseline table is computed for the final cohort: a complete age-band by sex grid (suppressed cell by cell) and up to 10 comorbidities, the most common first. Conditions recorded on or before the index date count. Comorbidities with fewer than 11 patients are **left out**, not masked, and a constant note says so; the list can be shorter than ten or empty. | US-5 |
 | FR-10 | Any step count or baseline age/sex cell from 1 to 10 is returned as `"<11"`. Zero stays `0`. Comorbidities are the exception: a condition under 11 patients is omitted rather than shown as `"<11"`, because a masked row would still name the condition. | US-8 |
 | FR-11 | No endpoint returns patient-level rows. | US-8 |
 | FR-12 | Every response carries an `X-Trace-Id` header; failed runs show "Something went wrong. Reference: <trace id>". | US-9 |
 | FR-13 | `GET /healthz` (liveness), `GET /readyz` (readiness incl. database check) and `GET /version` (the commit the revision runs; Cloud Run reserves `/healthz` on its public URL, so deploy checks use `/version`). | US-10 |
 | FR-14 | Queries are cancelled after a 10 s statement timeout. | US-4 |
-| FR-15 | The UI provides a cohort list, a builder (with reorderable rules) and a results screen with waterfall chart, baseline table and run history. | US-2, US-4–7 |
+| FR-15 | The UI provides a cohort list, a builder (with reorderable rules) and a results screen with waterfall chart, baseline table and run history (the 5 newest runs, with a toggle to show all). | US-2, US-4–7 |
 | FR-16 | Alert rules on run error rate and p95 latency carry `agent=oncall` and start the on-call agent. The agent acts **on dev only**; prod incidents are not handled by it (the prod path is not built, by design: `docs/oncall.md`). | US-10, US-11 |
 | FR-17 | `docker compose up --build` starts frontend, API, database (auto-seeded) and local telemetry stack. | US-12 |
 
@@ -99,6 +99,7 @@ All data is synthetic. No real patient information ever exists in the system.
 
 **US-6 Edit and re-run**
 - Given a cohort with a previous run, when I change a criterion and re-run, then a new run is added and the earlier run is kept in history.
+- Given a cohort with more than 5 runs, then the history shows the 5 newest and a "Show all (N)" button; given a completed run and a page reload, then its baseline is shown again without running the cohort.
 
 **US-7 History**
 - Given a cohort with three runs, then the history lists them newest first with status, final count and duration.
