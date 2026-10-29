@@ -34,7 +34,8 @@ def test_the_oncall_dry_run_step_is_a_single_line_that_appends_to_the_environmen
 
 
 # The first major of each action that runs on Node 24. GitHub runs Node 20 actions on Node 24 anyway and warns
-# ("Node.js 20 is deprecated") on every run; Node 20 is removed from the runners later, so older majors will stop working.
+# ("Node.js 20 is deprecated") on every run; Node 20 is removed from the runners later, so older majors will stop
+# working.
 NODE24_MAJOR = {
     "actions/checkout": 5,
     "actions/setup-python": 6,
