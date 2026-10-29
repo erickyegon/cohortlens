@@ -22,7 +22,8 @@ from oncall.payload import Alert
 
 METRICS = ("error_ratio", "p95_seconds", "run_rate", "success_runs")
 WINDOWS = ("5m", "10m", "30m", "1h", "6h")
-INCIDENT_STATUSES = ("investigating", "rolled_back", "escalated", "resolved")
+# `resolved` exists only for the workflow (a resolved notification closes the incident); the model may not close one
+INCIDENT_STATUSES = ("investigating", "rolled_back", "escalated")
 SUMMARY_LIMIT = 1500
 _REVISION = re.compile(r"cohortlens-(api|web)-(dev|prod)-\d{5}-[a-z0-9]{3}")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")

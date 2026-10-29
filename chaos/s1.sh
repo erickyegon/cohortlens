@@ -15,8 +15,9 @@
 #      the two revisions apart. It becomes the revision serving 100% of traffic, like a bad release;
 #   3. keeps sending runs (about 5 a minute) and watches which revision serves: when the agent rolls back, the serving
 #      revision changes; it then keeps sending runs until the runs succeed again and reports the incident issue;
-#   4. if the agent has NOT acted when the time is up, it restores the healthy revision itself and says so (exit 1):
-#      the drill never leaves dev broken.
+#   4. if the agent has NOT acted when the time is up, it restores the healthy revision itself and says so (exit 1).
+#      The restore also runs on an error or Ctrl-C once the fault is injected (not on SIGKILL: then run the
+#      update-traffic command it prints).
 set -euo pipefail
 export LC_ALL=C
 
@@ -87,6 +88,7 @@ ARMED=0 TRAFFIC=""
 cleanup() {
   local code=$?
   trap - EXIT
+  trap '' INT TERM  # a second Ctrl-C must not abort the restore
   if [ -n "$TRAFFIC" ]; then kill "$TRAFFIC" 2> /dev/null || true; fi
   if (( ARMED )); then restore || echo "WARNING: could not restore ${GOOD}; run: gcloud run services update-traffic ${SERVICE} --to-revisions=${GOOD}=100 --region ${REGION} --project ${PROJECT_ID}" >&2; fi
   exit "$code"
@@ -119,6 +121,7 @@ while (( $(date +%s) < DEADLINE )); do
   sleep 30
 done
 
+NOW_SERVING="$(serving || true)"  # the last poll may be up to 30 s old: look again before giving up
 if [ "$NOW_SERVING" = "$BAD" ] || [ -z "$NOW_SERVING" ]; then
   echo "RESULT: FAILED. The agent did not move the traffic within ${MINUTES} minutes (the healthy revision is restored on exit)."
   exit 1
@@ -129,7 +132,7 @@ echo "agent moved the traffic: now serving ${NOW_SERVING} (was ${BAD})"
 
 echo "== 4. recovery: runs should succeed again; the incident issue should close when the alert resolves"
 sleep 90
-RECENT="$(tail -5 "${TMPDIR:-/tmp}/s1-traffic.log" | grep -c 'HTTP 201' || true)"
+RECENT="$(grep '^run ' "${TMPDIR:-/tmp}/s1-traffic.log" | tail -5 | grep -c 'HTTP 201' || true)"
 echo "last five runs: ${RECENT} succeeded (HTTP 201)"
 gh issue list --label incident --state all --limit 3 --json number,title,state,labels \
   --jq '.[] | "incident #\(.number) [\(.state)] \(.title) labels: \([.labels[].name] | join(","))"'

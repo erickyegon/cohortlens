@@ -50,8 +50,9 @@ def test_list_revisions_refuses_other_services(service):
     assert tools.call("list_revisions", {"service": service})[1]
 
 
-@pytest.mark.parametrize("status", ["done", "", "ESCALATED", "rolled_back; rm"])
-def test_update_incident_takes_only_the_four_statuses(status):
+@pytest.mark.parametrize("status", ["done", "", "ESCALATED", "rolled_back; rm", "resolved"])
+def test_update_incident_takes_only_the_three_statuses_and_never_resolved(status):
+    """Closing an incident is the workflow's job on a resolved notification, not something the model may do."""
     tools, backend = make()
     assert tools.call("update_incident", {"status": status, "summary": "x"})[1] and backend.comments == []
 

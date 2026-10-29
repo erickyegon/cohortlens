@@ -112,17 +112,18 @@ def test_rollback_runs_the_existing_script_with_validated_arguments_and_marks_th
     runner = Runner({"rollback.sh": (0, "moved")})
     outcome = backend(runner).rollback("dev", "api", "cohortlens-api-dev-00006-ok1", 42)
     assert outcome["ok"] is True
-    command, _ = runner.calls[0]
+    command, _ = runner.calls[1]
     assert command == ["bash", "infra/gcp/rollback.sh", "--env", "dev", "--service", "api", "--revision",
                        "cohortlens-api-dev-00006-ok1", "--incident", "42"]
-    marker = runner.calls[1][1]
+    marker = runner.calls[0][1]  # written first: the attempt counts against the hourly limit even if it fails
     assert "<!-- oncall-rollback service=api env=dev at=" in marker
 
 
-def test_a_failed_rollback_is_reported_and_leaves_no_marker():
+def test_a_failed_rollback_is_reported_and_still_counts_against_the_hourly_limit():
+    """rollback.sh can fail AFTER moving the traffic (its post-move smoke test): the marker must already exist."""
     runner = Runner({"rollback.sh": (1, "smoke test failed")})
     outcome = backend(runner).rollback("dev", "api", "cohortlens-api-dev-00006-ok1", 42)
-    assert outcome["ok"] is False and len(runner.calls) == 1
+    assert outcome["ok"] is False and len(runner.calls) == 2 and "oncall-rollback" in runner.calls[0][1]
 
 
 @pytest.mark.parametrize("revision", ["cohortlens-api-dev-00006-ok1; ls", "x", "--help"])
@@ -209,7 +210,7 @@ def test_a_stamp_far_in_the_future_is_ignored_but_a_valid_one_beside_it_still_co
     assert [moment.isoformat() for moment in history_of(comments)] == ["2026-10-29T11:00:00+00:00"]
 
 
-def test_a_failure_to_post_the_marker_does_not_turn_a_successful_rollback_into_an_error():
+def test_if_the_marker_cannot_be_recorded_the_rollback_is_not_attempted():
     class NoComments(Runner):
         def __call__(self, command, input_text=None, timeout=900):
             if command[:3] == ["gh", "issue", "comment"]:
@@ -218,7 +219,8 @@ def test_a_failure_to_post_the_marker_does_not_turn_a_successful_rollback_into_a
 
     runner = NoComments({"rollback.sh": (0, "moved")})
     outcome = backend(runner).rollback("dev", "api", "cohortlens-api-dev-00006-ok1", 42)
-    assert outcome["ok"] is True and "marker" in outcome["detail"]
+    assert outcome["ok"] is False and "not attempted" in outcome["detail"]
+    assert not any("rollback.sh" in " ".join(call[0]) for call in runner.calls)
 
 
 def test_a_label_that_cannot_be_added_does_not_stop_the_comment_or_the_close():
@@ -231,3 +233,16 @@ def test_a_label_that_cannot_be_added_does_not_stop_the_comment_or_the_close():
     runner = NoLabels()
     backend(runner).comment_incident(42, "alert resolved", "resolved")
     assert any(call[0][:3] == ["gh", "issue", "close"] for call in runner.calls)
+
+
+def test_a_rollback_script_that_times_out_is_reported_as_possibly_moved_not_as_a_crash():
+    import subprocess
+
+    class Slow(Runner):
+        def __call__(self, command, input_text=None, timeout=900):
+            if command[:2] == ["bash", "infra/gcp/rollback.sh"]:
+                raise subprocess.TimeoutExpired(command, timeout)
+            return super().__call__(command, input_text, timeout)
+
+    outcome = backend(Slow()).rollback("dev", "api", "cohortlens-api-dev-00006-ok1", 42)
+    assert outcome["ok"] is False and "may have moved" in outcome["detail"]

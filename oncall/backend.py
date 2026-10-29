@@ -133,19 +133,21 @@ class LiveBackend:
         command = ["bash", "infra/gcp/rollback.sh", "--env", environment, "--service", service, "--revision", revision]
         if incident:
             command += ["--incident", str(int(incident))]
-        done = self._run(command)
-        tail = (done.stdout + done.stderr).strip().splitlines()[-3:]
-        ok = done.returncode == 0
-        detail = " | ".join(tail)[:450]
-        if ok and incident:
+            # The hourly limit is recorded BEFORE the attempt: rollback.sh can move the traffic and then fail its
+            # post-move smoke test, and a rollback that is not recorded could be repeated and flap the service. If the
+            # marker cannot be written, nothing is attempted.
             moment = self._clock().strftime("%Y-%m-%dT%H:%M:%SZ")
             try:
                 self._comment(incident, f"<!-- oncall-rollback service={service} env={environment} at={moment} -->\n"
-                                        f"On-call agent rolled {service} back to {revision} in {environment}.")
-            except RuntimeError:
-                # the traffic did move: report success, but say the one-per-hour limit may not see this rollback
-                detail += " | warning: the marker comment failed, so the hourly limit may not see this rollback"
-        return {"ok": ok, "detail": detail}
+                                        f"On-call agent is rolling {service} back to {revision} in {environment}.")
+            except Exception:  # noqa: BLE001 - any failure to record means: do not roll back
+                return {"ok": False, "detail": "rollback not attempted: it could not be recorded on the incident"}
+        try:
+            done = self._run(command)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "detail": "rollback.sh timed out; the traffic may have moved, check the service"}
+        tail = (done.stdout + done.stderr).strip().splitlines()[-3:]
+        return {"ok": done.returncode == 0, "detail": " | ".join(tail)[:450]}
 
     # ---- GitHub incident issue --------------------------------------------------------------------------------------
 

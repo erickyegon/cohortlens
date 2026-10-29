@@ -61,3 +61,11 @@ def test_the_healthy_revision_is_restored_on_any_exit_after_the_fault_is_injecte
     assert "trap cleanup EXIT" in text and "trap 'exit 130' INT TERM" in text
     assert text.index("ARMED=1") < text.index("--update-env-vars") and "ARMED=0" in text
     assert 'NOW_SERVING="$(serving || true)"' in text
+
+
+def test_a_second_interrupt_cannot_abort_the_restore_and_a_stale_poll_cannot_override_the_agent():
+    text = SCRIPT.read_text(encoding="utf-8")
+    cleanup = text[text.index("cleanup() {"):text.index("trap cleanup EXIT")]
+    assert "trap '' INT TERM" in cleanup
+    assert text.count('NOW_SERVING="$(serving || true)"') >= 2  # re-read once more after the loop
+    assert "grep '^run '" in text

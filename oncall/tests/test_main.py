@@ -105,3 +105,38 @@ def test_if_the_model_call_itself_fails_the_incident_is_still_escalated_and_the_
     with pytest.raises(ConnectionError):
         main(env, backend_factory=lambda _env: backend, client_factory=Down, now=lambda: NOW)
     assert [status for _, status, _ in backend.comments] == ["escalated"]
+
+
+def test_a_crash_before_the_update_still_escalates_and_the_log_lists_the_calls_made(capsys):
+    class DiesBeforeTheUpdate(ReplayClient):
+        def _create(self, **request):
+            if len(self.requests) >= 3:
+                raise ConnectionError("dropped")
+            return super()._create(**request)
+
+    backend = IncidentBackend()
+    client = DiesBeforeTheUpdate(load_recording("bad_deploy"))
+    env = {"ALERT_PAYLOAD": json.dumps(FIRING), "ONCALL_ENVIRONMENTS": "dev", "DRY_RUN": "false"}
+    with pytest.raises(ConnectionError):
+        main(env, backend_factory=lambda _env: backend, client_factory=lambda: client, now=lambda: NOW)
+    assert backend.rollbacks == [("dev", "api", OLD, 42)]
+    # no update was posted, so the fallback is right
+    assert [status for _, status, _ in backend.comments] == ["escalated"]
+    assert "tool rollback" in capsys.readouterr().out  # the calls made before the crash are in the log
+
+
+def test_the_fallback_is_skipped_when_an_update_was_posted_before_the_crash():
+    recording = load_recording("db_outage")
+
+    class DiesAtTheEnd(ReplayClient):
+        def _create(self, **request):
+            if len(self.requests) >= 3:
+                raise ConnectionError("dropped")
+            return super()._create(**request)
+
+    backend = IncidentBackend()
+    client = DiesAtTheEnd(recording)
+    env = {"ALERT_PAYLOAD": json.dumps(FIRING), "ONCALL_ENVIRONMENTS": "dev", "DRY_RUN": "false"}
+    with pytest.raises(ConnectionError):
+        main(env, backend_factory=lambda _env: backend, client_factory=lambda: client, now=lambda: NOW)
+    assert [status for _, status, _ in backend.comments] == ["escalated"]  # the agent's own update only

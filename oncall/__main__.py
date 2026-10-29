@@ -57,13 +57,23 @@ def main(env=None, backend_factory=LiveBackend, client_factory=_anthropic_client
     else:
         incident = backend.find_incident(alert.fingerprint) or backend.open_incident(alert)
     tools = Tools(policy, backend, alert, incident, now)
+    result = None
     try:
         result = run_agent(alert, tools, client_factory(), model=env.get("ONCALL_MODEL", DEFAULT_MODEL))
-    except Exception:
-        # the model could not be reached or answered badly: a person must still be told on the incident
-        if not policy.dry_run:
+    finally:
+        _report(tools)
+        # nobody may be left without a word on the incident, also when the model call crashed
+        if not (policy.dry_run or _posted(tools)):
             backend.comment_incident(incident, FALLBACK, "escalated")
-        raise
+    print(f"finished={result.finished} turns={result.turns}")
+    return 0 if result.finished else 1
+
+
+def _posted(tools) -> bool:
+    return any(call["tool"] == "update_incident" and not (call["refused"] or call["error"]) for call in tools.calls)
+
+
+def _report(tools) -> None:
     for call in tools.calls:
         outcome = "ok"
         if call["refused"]:
@@ -72,11 +82,6 @@ def main(env=None, backend_factory=LiveBackend, client_factory=_anthropic_client
             outcome = "error: " + call["error"]
         arguments = json.dumps(call["args"], sort_keys=True)[:200]
         print(f"  tool {call['tool']} {arguments} dry_run={call['dry_run']} -> {outcome}")
-    posted = any(call["tool"] == "update_incident" and not (call["refused"] or call["error"]) for call in tools.calls)
-    if not policy.dry_run and not posted:
-        backend.comment_incident(incident, FALLBACK, "escalated")
-    print(f"finished={result.finished} turns={result.turns}")
-    return 0 if result.finished else 1
 
 
 if __name__ == "__main__":

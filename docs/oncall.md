@@ -19,16 +19,16 @@ up once, how to run the drill, and what is **not** built.
    | `query_metrics` | read | one of four named metrics (error ratio, p95, run rate, successful runs) per revision over a fixed window, from Grafana Cloud. Never free-text PromQL. |
    | `list_revisions` | read | recent Cloud Run revisions: name, created, git version, traffic share (`gcloud`) |
    | `rollback` | write | moves all traffic to an earlier revision through the existing `infra/gcp/rollback.sh` (target smoke tested first, incident comment) |
-   | `update_incident` | write | a status comment on the incident issue: `investigating`, `rolled_back`, `escalated` (adds `needs-human`) or `resolved` |
+   | `update_incident` | write | a status comment on the incident issue: `investigating`, `rolled_back` or `escalated` (adds `needs-human`). The model cannot resolve or close an incident |
 
-7. A `resolved` notification does not use the model: the workflow comments, labels the issue `resolved-by-agent` and closes it.
+7. A `resolved` notification does not use the model: the workflow comments, labels the issue `resolved-by-agent` and closes it (only the workflow can: the tool does not offer `resolved`).
 
 ## Guardrails (code, `oncall/guardrails.py`, tested)
 
 - **Allowlist:** four tools; anything else is refused and the model is told so.
 - **Environments:** only those in the repository variable `ONCALL_ENVIRONMENTS` (none by default). The workflow additionally refuses `prod` (see "Not built").
 - **Dry run unless `DRY_RUN=false`:** the model and the read tools run for real; the two write tools record the call and do nothing.
-- **Rollback only to** an existing revision of that service that is **not serving** and whose **git version has at least 50 successful runs in the last 7 days** (counted from the metrics; the count is per version, not per revision, and says nothing about recent health, so the model is also told to check the error ratio); **at most one rollback per service per hour**. The hour is read from markers in incident comments, and **only comments made by the workflow's own account count** (a public repository takes anyone's comment); malformed, zoneless or far-future markers are ignored, and the model's text cannot contain a marker (`<!--` and `-->` are stripped).
+- **Rollback only to** an existing revision of that service that is **not serving** and whose **git version has at least 50 successful runs in the last 7 days** (counted from the metrics; the count is per version, not per revision, and says nothing about recent health, so the model is also told to check the error ratio); **at most one rollback per service per hour**. The attempt is recorded on the incident **before** `rollback.sh` runs (it can move the traffic and then fail its smoke test), and if it cannot be recorded nothing is attempted. The hour is read from markers in incident comments, and **only comments made by the workflow's own account count** (a public repository takes anyone's comment); malformed, zoneless or far-future markers are ignored, and the model's text cannot contain a marker (`<!--` and `-->` are stripped).
 - **Untrusted data:** tool results are wrapped as untrusted data and the system prompt says so, but the protection is the code above, not the prompt: a model that is talked into a dangerous call is refused (`oncall/tests/recordings/hostile.json`). Summaries are cut to 1,500 characters, stripped of control characters, and `@` is replaced so a comment cannot notify strangers.
 - **Tests never call the real Anthropic API.** The agent is replayed from recorded responses (`oncall/tests/recordings/`); the SDK is imported only in `oncall/__main__.py`. Decisions covered: bad deploy (rolls back), database outage (escalates, no rollback), hostile output (everything refused).
 
@@ -54,7 +54,7 @@ A bad release is promoted, the alert fires, the agent rolls back, the alert clea
 1. 60 successful warm-up runs on the healthy revision (so it has the 50 runs the guardrail requires), then 120 s for the metrics.
 2. A new revision from the **same image** with `CHAOS_FAULT=fail_runs` (the API fails every run; honoured only when `DEPLOYMENT_ENVIRONMENT` is exactly `dev`, `api/app/runs.py`) and a synthetic version label `deadbee…`, so Grafana tells the two revisions apart. It serves 100% of traffic.
 3. About 5 runs a minute (`loadgen/runs.py`; realistic definitions only). The error rate passes 5% with at least 10 runs; after the 2-minute hold the alert fires, Grafana posts to GitHub, the agent runs.
-4. The script watches the serving revision; when the agent moves it, it keeps sending runs until they succeed, and lists the incident issues. If the agent has not acted when the time is up, **the script restores the healthy revision itself and exits 1**: the drill never leaves dev broken.
+4. The script watches the serving revision; when the agent moves it, it keeps sending runs until they succeed, and lists the incident issues. If the agent has not acted when the time is up, **the script restores the healthy revision itself and exits 1**. The restore also runs on an error or Ctrl-C (a second Ctrl-C is ignored while it restores); only SIGKILL or a lost machine can leave dev on the faulty revision, and then the `update-traffic` command the script prints restores it. Stopping the traffic loop early skips its cohort cleanup, so a reference cohort may remain in dev. A second drill needs a deploy (or the rollback workflow) in between, because traffic stays pinned to a revision.
 
 ## Not built (honest list)
 
