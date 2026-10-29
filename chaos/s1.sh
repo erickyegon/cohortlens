@@ -106,6 +106,9 @@ SUFFIX="s1-$(date -u +%H%M%S)"
 ARMED=1
 gcloud run services update "$SERVICE" "${G[@]}" --revision-suffix "$SUFFIX" \
   --update-env-vars "CHAOS_FAULT=fail_runs,SERVICE_VERSION=${BAD_VERSION}" > /dev/null
+# the traffic is pinned to a named revision after a restore (and after a rollback), so a new revision would get 0%:
+# route to it explicitly, as a release that is promoted would be
+gcloud run services update-traffic "$SERVICE" "${G[@]}" --to-revisions="${SERVICE}-${SUFFIX}=100" > /dev/null
 BAD="$(serving)"
 [ -n "$BAD" ] && [ "$BAD" != "$GOOD" ] || { echo "error: the bad revision is not serving"; exit 1; }
 echo "bad revision serving: ${BAD}"
