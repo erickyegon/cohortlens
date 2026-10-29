@@ -43,7 +43,12 @@ The same code exports to Grafana Cloud when two things are set: the endpoint (no
 | `CohortRunErrorRateHigh` | at least 10 runs in 5 minutes and more than 5% of them failed or timed out | 2 minutes |
 | `CohortRunLatencyHigh` | at least 20 runs in 10 minutes and p95 run duration above 3 s | 5 minutes |
 
-The minimum-runs guard is part of each query, so a quiet system returns no data, and no data means OK. Every alert carries `service`, `environment`, `agent=oncall` and a `runbook_url` (see `docs/runbooks/`). The queries were run against a real Prometheus with `promtool test rules`: a busy environment fires, a low-volume one does not.
+The minimum-runs guard is part of each query, so a quiet system returns no data, and no data means OK. Every alert carries `service`, `environment`, `agent=oncall` and a `runbook_url` (see `docs/runbooks/`). The behaviour is tested with `promtool test rules` (`infra/grafana/alert-tests.yml`, run by `api/tests/unit/test_grafana_promtool.py` with `promtool` or Docker; skipped if neither exists, so CI without Docker relies on the text checks): eight synthetic environments cover a busy and failing system, a healthy one, a quiet one that fails every run (fewer than 10 runs: silent), timeouts counted as errors, 3.8% errors (below 5%: silent), slow, fast, and quiet-slow (fewer than 20 runs: silent). Five realistic edits to the expressions are shown to fail them.
+
+Notes on how the rules behave:
+- The alert queries are instant, evaluated at the current time over their own `[5m]` / `[10m]` range selectors. The rule group `cohortlens` is created with Grafana's default evaluation interval (1 minute), which the `for` durations assume; the provisioning API does not set it.
+- Each API instance exports under its own `service.instance.id`, so instances of one revision never share a series; the alert queries `sum by (environment)` across them. All three outcome series exist from startup at zero, because `increase()` cannot see a counter that first appears with value 1.
+- `apply.sh` overwrites the dashboard on every run: edits made in the Grafana UI are lost, so change `dashboard.json` instead. Rules are updated in place.
 
 **Service-account token.** In your stack (`https://<stack>.grafana.net`): Administration, Users and access, Service accounts, Add service account; role **Admin** (it must create folders, dashboards and alert rules); Add service account token; copy it once. Then, in a Git Bash window:
 

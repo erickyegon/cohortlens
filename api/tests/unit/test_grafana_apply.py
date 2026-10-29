@@ -50,7 +50,9 @@ printf '%s %s\n' "$method" "$url" > "$FAKE_DIR/request_$n"
 status=200; body='{}'
 if [[ "$url" == */api/datasources ]]; then body="$FAKE_DATASOURCES"; fi
 if [[ "$url" == */api/folders/cohortlens && "$method" == GET ]]; then status="${FAKE_FOLDER_STATUS:-404}"; fi
+if [[ "$url" == */api/folders && "$method" == POST ]]; then status="${FAKE_FOLDER_POST_STATUS:-200}"; fi
 if [[ "$url" == */provisioning/alert-rules/* && "$method" == GET ]]; then status="${FAKE_RULE_STATUS:-404}"; fi
+if [[ "$url" == */provisioning/alert-rules && "$method" == POST ]]; then status="${FAKE_RULE_CREATE_STATUS:-200}"; fi
 if [ -n "${FAKE_FAIL_ON:-}" ] && [[ "$method $url" == *"$FAKE_FAIL_ON"* ]]; then
   status=500; body='{"message":"boom"}'
 fi
@@ -243,3 +245,38 @@ def test_dry_run_asks_for_no_token_makes_no_request_and_says_what_it_would_do(tm
     assert result.returncode == 0 and requests(work) == []
     for needle in ("dry run", "dashboard.json", "alert-rules.json", "CohortRunErrorRateHigh", "CohortRunLatencyHigh"):
         assert needle in result.stdout, needle
+
+
+# ---- review findings of #73 ----------------------------------------------------------------------------------------
+
+def test_help_prints_the_usage_comment_and_no_code(tmp_path):
+    result, work = run_apply(tmp_path, "--help")
+    assert result.returncode == 0 and requests(work) == []
+    assert "apply.sh" in result.stdout and "set -euo" not in result.stdout and "LC_ALL" not in result.stdout
+
+
+STORE_STUB = "#!/usr/bin/env bash\necho 'Python was not found' >&2\nexit 9\n"
+
+
+def test_a_python_that_does_not_work_is_found_before_the_token_is_asked_for(tmp_path):
+    """On Windows `python3` can be the Microsoft Store stub, which exits with an error instead of running."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _install(bin_dir, "python3", STORE_STUB)
+    _install(bin_dir, "python", STORE_STUB)
+    result, work = run_apply(tmp_path)
+    assert result.returncode != 0 and requests(work) == []
+    assert "python" in result.stderr.lower() and TOKEN not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("status", ["409", "412"])
+def test_a_folder_with_the_same_title_under_another_uid_gets_a_message_that_says_what_to_do(tmp_path, status):
+    result, work = run_apply(tmp_path, env={"FAKE_FOLDER_POST_STATUS": status})
+    assert result.returncode != 0
+    assert "CohortLens" in result.stderr and "uid" in result.stderr and status in result.stderr
+    assert not any("dashboards/db" in line for line in requests(work))  # nothing was written after the failure
+
+
+def test_a_201_on_creating_a_rule_is_a_success(tmp_path):
+    result, _ = run_apply(tmp_path, env={"FAKE_RULE_CREATE_STATUS": "201"})
+    assert result.returncode == 0, result.stderr

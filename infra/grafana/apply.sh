@@ -30,7 +30,7 @@ FOLDER_TITLE="CohortLens"
 
 refuse() { echo "error: $*" >&2; exit 2; }
 
-usage() { sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 { if ($0 ~ /^#/) { sub(/^# ?/, ""); print } else exit }' "${BASH_SOURCE[0]}"; }
 
 URL="" DRY_RUN=0 STDIN_OK=0
 while (( $# )); do
@@ -61,7 +61,7 @@ if (( DRY_RUN )); then
 fi
 
 PYTHON="$(command -v python3 || command -v python || true)"
-[ -n "$PYTHON" ] || refuse "python is required to read the JSON answers"
+[ -n "$PYTHON" ] && "$PYTHON" -c 'import sys' > /dev/null 2>&1   || refuse "a working python is required to read the JSON answers (on Windows, python3 can be the Microsoft Store stub: install Python or turn that alias off)"
 command -v curl > /dev/null || refuse "curl is required"
 
 # ---- the token: hidden prompt, or one piped line when --stdin is explicit ------------------------------------------
@@ -159,7 +159,11 @@ case "$STATUS" in
   404)
     printf '{"uid":"%s","title":"%s"}' "$FOLDER_UID" "$FOLDER_TITLE" > "$WORK/folder.json"
     call POST /api/folders "$WORK/folder.json"
-    [ "$STATUS" = 200 ] || fail POST /api/folders
+    case "$STATUS" in
+      200) ;;
+      409 | 412) echo "error: Grafana answered HTTP $STATUS creating the folder '$FOLDER_TITLE' (uid $FOLDER_UID): a folder with that title probably exists under another uid. Rename or delete it in Grafana (Dashboards) and run this again" >&2; exit 1 ;;
+      *) fail POST /api/folders ;;
+    esac
     echo "folder '$FOLDER_TITLE' created" ;;
   *) fail GET "/api/folders/$FOLDER_UID" ;;
 esac

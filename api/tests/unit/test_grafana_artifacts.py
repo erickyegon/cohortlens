@@ -138,3 +138,17 @@ def test_no_file_contains_a_credential_or_a_real_data_source_id():
         pattern = r"glc_|glsa_|Bearer |Basic [A-Za-z0-9+/=]{12,}|password|@[a-z0-9.-]+.grafana.net"
         assert not re.search(pattern, text, re.I)
         assert "grafanacloud-" not in text  # data sources are looked up at apply time, never hard-coded
+
+
+def test_each_rules_query_window_matches_the_longest_range_in_its_expression(rules):
+    """The query is instant, so Grafana evaluates it at `to`; `from` must still cover the range selector (5m / 10m)."""
+    expected = {"CohortRunErrorRateHigh": 300, "CohortRunLatencyHigh": 600}
+    for title, rule in rules.items():
+        (query,) = [item for item in rule["data"] if item["datasourceUid"] != "__expr__"]
+        assert query["relativeTimeRange"] == {"from": expected[title], "to": 0}, title
+
+
+def test_the_failure_log_panel_filters_on_the_outcome_the_api_logs(dashboard):
+    """runs.py logs `run finished outcome=<outcome>`; match that, not guessed words."""
+    (panel,) = [item for item in dashboard["panels"] if item["type"] == "logs"]
+    assert "outcome=(failed|timeout)" in panel["targets"][0]["expr"]

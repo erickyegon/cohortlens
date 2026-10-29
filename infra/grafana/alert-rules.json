@@ -25,7 +25,7 @@
       {
         "refId": "A",
         "relativeTimeRange": {
-          "from": 600,
+          "from": 300,
           "to": 0
         },
         "datasourceUid": "__PROMETHEUS_UID__",
@@ -107,7 +107,7 @@
       {
         "refId": "A",
         "relativeTimeRange": {
-          "from": 1200,
+          "from": 600,
           "to": 0
         },
         "datasourceUid": "__PROMETHEUS_UID__",

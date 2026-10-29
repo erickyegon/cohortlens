@@ -1,0 +1,98 @@
+# Behaviour of the two alert rules, run by api/tests/unit/test_grafana_promtool.py with `promtool test rules`.
+# The rules file is generated from alert-rules.json, so these tests always run the committed expressions.
+# Evaluation at 14m; every series has one sample per minute. Each environment is one scenario:
+#   busy-bad       25 runs/5m, 20% failed                  error rule fires
+#   busy-ok        20 runs/5m, none failed                 error rule quiet
+#   quiet-bad      5 runs/5m, all failed                   error rule quiet (fewer than 10 runs)
+#   timeouts       20% timed out                           error rule fires (timeouts count as errors)
+#   just-under     ~3.8% failed                            error rule quiet (below 5%)
+#   slow           30 runs/10m, p95 above 3 s              latency rule fires
+#   fast           30 runs/10m, every run under 3 s        latency rule quiet
+#   quiet-slow     10 runs/10m, all slow                   latency rule quiet (fewer than 20 runs)
+rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+- interval: 1m
+  input_series:
+    - series: 'cohortlens_cohort_runs_total{environment="busy-bad",outcome="success",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_runs_total{environment="busy-bad",outcome="failed",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_runs_total{environment="busy-bad",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="busy-ok",outcome="success",revision="r1"}'
+      values: '0+4x15'
+    - series: 'cohortlens_cohort_runs_total{environment="busy-ok",outcome="failed",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="busy-ok",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-bad",outcome="success",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-bad",outcome="failed",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-bad",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="timeouts",outcome="success",revision="r1"}'
+      values: '0+4x15'
+    - series: 'cohortlens_cohort_runs_total{environment="timeouts",outcome="failed",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="timeouts",outcome="timeout",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_runs_total{environment="just-under",outcome="success",revision="r1"}'
+      values: '0+5x15'
+    - series: 'cohortlens_cohort_runs_total{environment="just-under",outcome="failed",revision="r1"}'
+      values: '0+0.2x15'
+    - series: 'cohortlens_cohort_runs_total{environment="just-under",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="slow",outcome="success",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_runs_total{environment="slow",outcome="failed",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="slow",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="fast",outcome="success",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_runs_total{environment="fast",outcome="failed",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="fast",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-slow",outcome="success",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-slow",outcome="failed",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_runs_total{environment="quiet-slow",outcome="timeout",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="slow",le="0.05",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="slow",le="3",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="slow",le="10",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="slow",le="+Inf",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="fast",le="0.05",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="fast",le="3",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="fast",le="10",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="fast",le="+Inf",revision="r1"}'
+      values: '0+3x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="quiet-slow",le="0.05",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="quiet-slow",le="3",revision="r1"}'
+      values: '0+0x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="quiet-slow",le="10",revision="r1"}'
+      values: '0+1x15'
+    - series: 'cohortlens_cohort_run_duration_seconds_bucket{environment="quiet-slow",le="+Inf",revision="r1"}'
+      values: '0+1x15'
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: CohortRunErrorRateHigh
+    exp_alerts:
+    - exp_labels: {environment: busy-bad}
+    - exp_labels: {environment: timeouts}
+  - eval_time: 14m
+    alertname: CohortRunLatencyHigh
+    exp_alerts:
+    - exp_labels: {environment: slow}

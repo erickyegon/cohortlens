@@ -277,7 +277,7 @@
             "uid": "__LOKI_UID__"
           },
           "editorMode": "code",
-          "expr": "{service_name=\"cohortlens-api\", deployment_environment=~\"$environment\"} |~ \"failed|timed out|timeout|exception\""
+          "expr": "{service_name=\"cohortlens-api\", deployment_environment=~\"$environment\"} |~ \"outcome=(failed|timeout)\""
         }
       ],
       "gridPos": {
