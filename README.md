@@ -2,7 +2,7 @@
 
 Tells a real-world-evidence scientist, in seconds, whether enough patients exist in an OMOP database to run a proposed study.
 
-> Status: all six phases are built. Dev and prod are live (synthetic data only), CI/CD deploys dev on every merge and promotes the same image to prod behind an approval, and the on-call agent rolled back a faulty release in a drill on dev. The honest account of what is and is not done is [docs/progress-audit.md](docs/progress-audit.md). The product specification is [docs/spec.md](docs/spec.md).
+> Status: all six phases are built, with the exceptions listed under the scorecard. Dev and prod are live (synthetic data only), CI/CD deploys dev on every merge and promotes the same image to prod behind an approval, and the on-call agent rolled back a faulty release in a drill on dev. The honest account of what is and is not done is [docs/progress-audit.md](docs/progress-audit.md). The product specification is [docs/spec.md](docs/spec.md).
 
 ## Live URLs and demo
 
@@ -11,7 +11,7 @@ Tells a real-world-evidence scientist, in seconds, whether enough patients exist
 | **Prod** | <https://cohortlens-web-prod-rqflqlsgzq-ul.a.run.app> | <https://cohortlens-api-prod-rqflqlsgzq-ul.a.run.app> (`/version`, `/readyz`) |
 | **Dev** | <https://cohortlens-web-dev-rqflqlsgzq-ul.a.run.app> | <https://cohortlens-api-dev-rqflqlsgzq-ul.a.run.app> (`/version`, `/readyz`) |
 
-Prod serves exactly the image digests dev served. The data is synthetic (5,724 persons); the reference cohort ends at **481** patients. Cloud Run scales to zero, so the first request after a quiet period can take a few seconds.
+At its last promotion prod served exactly the image digests dev served. The data is synthetic (5,724 persons); the reference cohort ends at **481** patients. Cloud Run scales to zero, so the first request after a quiet period can take a few seconds.
 
 **Demo video:** _link to be added by the owner_
 

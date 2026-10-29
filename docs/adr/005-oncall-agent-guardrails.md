@@ -22,7 +22,7 @@ A Grafana alert starts a model that can move production-like traffic. A model ca
 - **A revert pull request or code changes by the model.** More power than the first version needs; not built.
 
 ## Consequences
-- **Drill S1 passed on dev** (audit section 12): the agent rolled back a faulty revision within about 4.5 minutes of the fault and the incident closed on the resolved notification ([run 40894738766](https://github.com/erickyegon/cohortlens/actions/runs/40894738766), [run 40896403031](https://github.com/erickyegon/cohortlens/actions/runs/40896403031), [incident #78](https://github.com/erickyegon/cohortlens/issues/78)). The same drill showed the guardrails refusing a malformed alert (attempt 1).
+- **Drill S1 passed on dev** (audit section 12): the agent rolled back a faulty revision within about 4.5 minutes of the fault and the incident closed on the resolved notification ([run 40894738766](https://github.com/erickyegon/cohortlens/actions/runs/40894738766), [run 40896403031](https://github.com/erickyegon/cohortlens/actions/runs/40896403031), [incident #78](https://github.com/erickyegon/cohortlens/issues/78)). The same drill showed the agent's input checks refusing a malformed alert (attempt 1).
 - **`ONCALL_DRY_RUN=false` stays on** in the repository. The worst case is dev traffic moved to an older revision that passed the 50-run check, once an hour; setting the variable to `true` stops every change.
 - **A failed attempt before traffic moved still blocks a retry for an hour.** Safe, but a person has to step in.
 - **During an alert storm an event can be dropped:** the workflow keeps one running and one pending run. A queue would need an external service.
