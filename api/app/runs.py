@@ -53,9 +53,22 @@ def _span(name: str):
     return telemetry.get_tracer().start_as_current_span(name, record_exception=False, set_status_on_exception=False)
 
 
+class InjectedFault(RuntimeError):
+    """Raised by the chaos drill's fault hook; carries no data."""
+
+
+def _inject_fault() -> None:
+    """Chaos drill S1 (docs/oncall.md): a revision deployed with CHAOS_FAULT=fail_runs fails every run, like a bad
+    release would. Honoured only when the environment is exactly `dev`: never in prod, never on a developer's
+    machine."""
+    if os.environ.get("CHAOS_FAULT") == "fail_runs" and telemetry.environment() == "dev":
+        raise InjectedFault("injected fault")
+
+
 def execute_run(definition: CohortDefinition, timeout_ms: int) -> RunOutcome:
     """Compile, count every step and the baseline on the READER connection, and suppress. Raises `CohortTimeout` when
     the database cancels a statement; connection failures propagate as SQLAlchemy errors."""
+    _inject_fault()
     with _span("compile"):
         plan = build_plan(definition)
     with reader_engine().connect() as conn:

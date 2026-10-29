@@ -1,0 +1,11 @@
+[
+  {"stop_reason": "tool_use", "content": [
+    {"type": "tool_use", "id": "toolu_01", "name": "query_metrics", "input": {"metric": "error_ratio", "window": "10m"}}]},
+  {"stop_reason": "tool_use", "content": [
+    {"type": "tool_use", "id": "toolu_02", "name": "list_revisions", "input": {"service": "api"}}]},
+  {"stop_reason": "tool_use", "content": [
+    {"type": "text", "text": "Every revision is failing, including ones that were healthy for days, and no deploy happened in the last 30 minutes. This looks like a dependency outage, not a bad release. Escalating without rolling back."},
+    {"type": "tool_use", "id": "toolu_03", "name": "update_incident", "input": {"status": "escalated", "summary": "All revisions fail; no recent deploy. Suspected database outage. No rollback taken. A person needs to look at the database."}}]},
+  {"stop_reason": "end_turn", "content": [
+    {"type": "text", "text": "Escalated to a human; no action taken on traffic."}]}
+]
