@@ -87,8 +87,7 @@ jobs:
         run: |
           # by hand: the input decides; from an alert: the variable, and anything but an explicit "false" is a dry run
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then dry="$INPUT_DRY_RUN"; else dry="${VAR_DRY_RUN:-true}"; fi
-          printf 'DRY_RUN=%s
-' "$dry" >> "$GITHUB_ENV"
+          echo "DRY_RUN=$dry" >> "$GITHUB_ENV"
 
       - name: Build the alert payload
         run: |
