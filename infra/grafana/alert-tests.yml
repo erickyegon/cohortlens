@@ -1,7 +1,7 @@
 # Behaviour of the two alert rules, run by api/tests/unit/test_grafana_promtool.py with `promtool test rules`.
 # The rules file is generated from alert-rules.json, so these tests always run the committed expressions.
 # Evaluation at 14m; every series has one sample per minute. Each environment is one scenario:
-#   busy-bad       25 runs/5m, 20% failed                  error rule fires
+#   busy-bad       20 runs/5m, 25% failed                  error rule fires
 #   busy-ok        20 runs/5m, none failed                 error rule quiet
 #   quiet-bad      5 runs/5m, all failed                   error rule quiet (fewer than 10 runs)
 #   timeouts       20% timed out                           error rule fires (timeouts count as errors)
