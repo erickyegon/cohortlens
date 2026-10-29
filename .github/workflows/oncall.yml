@@ -1,0 +1,111 @@
+name: On-call agent
+
+# Started by a Grafana alert (repository_dispatch "grafana-alert") or by hand (Actions -> On-call agent -> Run workflow,
+# which simulates an alert; dry run is the default). `python -m oncall` validates the alert, opens or finds the incident
+# issue, lets the model investigate with four guarded tools, and records the decision on the issue (docs/oncall.md).
+#
+# Where it may act is decided by repository VARIABLES, not by this file:
+#   ONCALL_ENVIRONMENTS  dev (the only value this workflow accepts: it authenticates with the dev deploy account, so it
+#                        must never be able to touch prod without the production approval)
+#   ONCALL_DRY_RUN       "true" (default) records what it would do and changes nothing; "false" makes it act
+#   GRAFANA_URL          https://<stack>.grafana.net
+# Secrets: ANTHROPIC_API_KEY, GRAFANA_READ_TOKEN (a Viewer service-account token).
+# The alert payload reaches the program as DATA through the environment; nothing from it is interpolated into a shell line.
+
+on:
+  repository_dispatch:
+    types: [grafana-alert]
+  workflow_dispatch:
+    inputs:
+      alertname:
+        description: "Simulated alert"
+        required: true
+        type: choice
+        options: [CohortRunErrorRateHigh, CohortRunLatencyHigh]
+      status:
+        description: "firing or resolved"
+        required: true
+        type: choice
+        options: [firing, resolved]
+      dry_run:
+        description: "Dry run (no write is executed; the model still runs and the read tools are real)"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write  # workload identity federation: no key files
+  issues: write    # the incident issue
+
+concurrency:
+  group: oncall
+  cancel-in-progress: false
+
+jobs:
+  oncall:
+    name: on-call agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' && vars.ONCALL_ENVIRONMENTS != ''
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ONCALL_ENVIRONMENTS: ${{ vars.ONCALL_ENVIRONMENTS }}
+      GRAFANA_URL: ${{ vars.GRAFANA_URL }}
+      EVENT_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+      SIM_ALERTNAME: ${{ inputs.alertname }}
+      SIM_STATUS: ${{ inputs.status }}
+      INPUT_DRY_RUN: ${{ inputs.dry_run }}
+      VAR_DRY_RUN: ${{ vars.ONCALL_DRY_RUN }}
+    steps:
+      - name: Refuse prod
+        run: |
+          # this job signs in with the dev deploy account; prod needs a job in the protected environment (docs/oncall.md)
+          case ",${ONCALL_ENVIRONMENTS//[[:space:]]/}," in
+            *,prod,*) echo "error: ONCALL_ENVIRONMENTS must not contain prod for this workflow" >&2; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r oncall/requirements.txt
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA_DEV }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Decide dry run
+        run: |
+          # by hand: the input decides; from an alert: the variable, and anything but an explicit "false" is a dry run
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then dry="$INPUT_DRY_RUN"; else dry="${VAR_DRY_RUN:-true}"; fi
+          printf 'DRY_RUN=%s
+' "$dry" >> "$GITHUB_ENV"
+
+      - name: Build the alert payload
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # a simulated alert for the dev environment; the fingerprint is the run id in hex
+            fingerprint="$(printf '%x' "$GITHUB_RUN_ID")"
+            starts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            payload="$(printf '{"status":"%s","alertname":"%s","environment":"dev","fingerprint":"%s","startsAt":"%s"}' \
+              "$SIM_STATUS" "$SIM_ALERTNAME" "$fingerprint" "$starts")"
+          else
+            payload="$EVENT_PAYLOAD"
+          fi
+          # one line, passed on as data
+          printf 'ALERT_PAYLOAD=%s\n' "$(printf '%s' "$payload" | python -c 'import json,sys; print(json.dumps(json.load(sys.stdin)))')" >> "$GITHUB_ENV"
+
+      - name: Run the agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GRAFANA_READ_TOKEN: ${{ secrets.GRAFANA_READ_TOKEN }}
+        run: python -m oncall
