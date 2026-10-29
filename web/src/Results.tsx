@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "./api";
 import { failureText } from "./Builder";
 import { formatCount, formatTime } from "./CohortList";
+import styles from "./Results.module.css";
 import type { Baseline, Cohort, Count, Run, StepCount } from "./types";
+import ui from "./ui.module.css";
+import { stepDrop } from "./waterfall";
 
 interface Props {
   cohortId: string;
@@ -11,6 +14,7 @@ interface Props {
 
 const SEXES: [string, string][] = [["F", "Female"], ["M", "Male"], ["other", "Other"]];
 const STATUS_TEXT: Record<Run["status"], string> = { success: "Success", failed: "Failed", timeout: "Timed out" };
+const OMITTED_NOTE = "Conditions with fewer than 11 patients are not shown."; // the API's note, shown until it has sent one
 
 const newestFirst = (runs: Run[]) =>
   [...runs].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)); // stable: ties keep the API order
@@ -23,7 +27,7 @@ function duration(ms: number | null): string {
 /** What to tell the user about a run that did not finish. The reference is the trace id they can give to support. */
 function RunProblem({ run }: { run: Run }) {
   return (
-    <p role="alert">
+    <p role="alert" className={styles.problem}>
       {run.status === "timeout"
         ? "This cohort took too long to count and was cancelled."
         : `Something went wrong. Reference: ${run.trace_id ?? "unavailable"}`}
@@ -32,13 +36,23 @@ function RunProblem({ run }: { run: Run }) {
   );
 }
 
+/** The status in words, with an icon from CSS, so colour is never the only signal. */
+function StatusBadge({ status, testId }: { status: Run["status"]; testId?: string }) {
+  return <span className={`${ui.badge} ${ui[status]}`} data-testid={testId}>{STATUS_TEXT[status]}</span>;
+}
+
 const SUPPRESSED_MAX = 10; // "<11" means at most 10 patients
 
+/** "−368 (40%)", or null where a suppressed count is involved (see stepDrop). */
+function dropText(drop: ReturnType<typeof stepDrop>): string | null {
+  return drop === null ? null : `−${drop.persons.toLocaleString("en-US")} (${drop.percent}%)`;
+}
+
 /**
- * One bar per step, scaled to the first step. A step with a real number is a `meter`. A suppressed step ("<11") is an
- * image with a text label (a meter needs a number) drawn as a dashed outline that is at most 10 patients wide: it never
- * looks bigger than a real step of 11, and it carries no number. With no scale (the first step is suppressed) it is a
- * fixed small outline, so no scale is implied.
+ * One row per step: label, remaining count, the drop from the previous step and a bar scaled to the first step. A step
+ * with a real number is a `meter`. A suppressed step ("<11") is an image with a text label (a meter needs a number)
+ * drawn as a dashed outline that is at most 10 patients wide: it never looks bigger than a real step of 11, and it
+ * carries no number. With no scale (the first step is suppressed) it is a fixed small outline, so no scale is implied.
  */
 export function Waterfall({ steps }: { steps: StepCount[] }) {
   const first = steps[0]?.persons;
@@ -48,26 +62,40 @@ export function Waterfall({ steps }: { steps: StepCount[] }) {
     if (scale === null) return persons === 0 ? "0%" : "100%";
     return `${Math.min(100, (persons / scale) * 100)}%`;
   };
-  const track = { background: "#e6e6e6", height: "1rem" } as const;
   return (
-    <ol aria-label="Attrition waterfall" style={{ listStyle: "none", padding: 0 }}>
-      {steps.map((step) => (
-        <li key={step.key} style={{ display: "grid", gridTemplateColumns: "16rem 1fr 6rem", gap: "0.5rem", alignItems: "center" }}>
-          <span>{step.label}</span>
-          {typeof step.persons === "number" ? (
-            <div role="meter" aria-label={step.label} aria-valuemin={0} aria-valuenow={step.persons}
-              aria-valuemax={scale ?? step.persons} style={track}>
-              <div style={{ width: widthOf(step.persons), height: "100%", background: "#3b6ea5" }} />
-            </div>
-          ) : (
-            <div role="img" aria-label={`${step.label}: ${step.persons}`} style={track}>
-              <div data-suppressed="true"
-                style={{ width: widthOf(step.persons), minWidth: "4px", height: "100%", border: "1px dashed #3b6ea5", boxSizing: "border-box" }} />
-            </div>
-          )}
-          <span style={{ textAlign: "right" }}>{formatCount(step.persons)}</span>
-        </li>
-      ))}
+    <ol aria-label="Attrition waterfall" className={styles.steps}>
+      {steps.map((step, i) => {
+        const text = i === 0 ? null : dropText(stepDrop(steps[i - 1].persons, step.persons));
+        return (
+          <li key={step.key} className={styles.step}>
+            <span className={styles.label}>{step.label}</span>
+            <span className={styles.count}>{formatCount(step.persons)}</span>
+            <span className={styles.drop}>
+              {i === 0 ? (
+                <span className={ui.srOnly}>First step, no previous step</span>
+              ) : text === null ? (
+                "Not shown"
+              ) : (
+                <>
+                  <span className={ui.srOnly}>Drop from the previous step: </span>
+                  {text}
+                </>
+              )}
+            </span>
+            {typeof step.persons === "number" ? (
+              <div role="meter" aria-label={step.label} aria-valuemin={0} aria-valuenow={step.persons}
+                aria-valuemax={scale ?? step.persons} className={styles.track}>
+                <div className={styles.fill} style={{ width: widthOf(step.persons) }} />
+              </div>
+            ) : (
+              <div role="img" aria-label={`${step.label}: ${step.persons}`} className={styles.track}>
+                <div data-suppressed="true" className={styles.suppressedFill}
+                  style={{ width: widthOf(step.persons), minWidth: "4px" }} />
+              </div>
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
@@ -78,33 +106,32 @@ function BaselineTables({ baseline }: { baseline: Baseline }) {
     baseline.age_sex.find((c) => c.age_band === band && c.sex === sex)?.persons ?? 0;
   return (
     <>
-      <table aria-label="Baseline by age and sex">
+      <table aria-label="Baseline by age and sex" className={styles.table}>
         <thead>
-          <tr><th>Age</th>{SEXES.map(([, name]) => <th key={name}>{name}</th>)}</tr>
+          <tr><th scope="col">Age</th>{SEXES.map(([, name]) => <th scope="col" key={name}>{name}</th>)}</tr>
         </thead>
         <tbody>
           {bands.map((band) => (
             <tr key={band}>
               <th scope="row">{band}</th>
-              {SEXES.map(([sex]) => <td key={sex}>{formatCount(cell(band, sex))}</td>)}
+              {SEXES.map(([sex]) => <td key={sex} className={styles.numeric}>{formatCount(cell(band, sex))}</td>)}
             </tr>
           ))}
         </tbody>
       </table>
       {baseline.comorbidities.length > 0 && (
-        <table aria-label="Most common conditions">
-          <thead><tr><th>Condition</th><th>Patients</th></tr></thead>
+        <table aria-label="Most common conditions" className={styles.table}>
+          <thead><tr><th scope="col">Condition</th><th scope="col">Patients</th></tr></thead>
           <tbody>
             {baseline.comorbidities.map((c) => (
               <tr key={c.concept_id}>
                 <th scope="row">{c.name ?? `Concept ${c.concept_id}`}</th>
-                <td>{formatCount(c.persons)}</td>
+                <td className={styles.numeric}>{formatCount(c.persons)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      <p>{baseline.comorbidity_note}</p>
     </>
   );
 }
@@ -172,53 +199,103 @@ export function Results({ cohortId, onBack }: Props) {
 
   return (
     <section aria-label="Results">
-      <h2>{cohort.name}</h2>
-      <button type="button" onClick={() => void runNow()} disabled={running}>
-        {running ? "Running…" : "Run feasibility"}
-      </button>{" "}
-      <button type="button" onClick={onBack}>Back to cohorts</button>
+      <header className={styles.header}>
+        <button type="button" className={styles.backLink} onClick={onBack}>
+          <span aria-hidden="true">←</span> Cohort list
+        </button>
+        <div className={styles.titleRow}>
+          <h2 className={styles.title}>{cohort.name}</h2>
+          <div className={styles.actions}>
+            <button type="button" className={`${ui.btn} ${ui.primary}`} onClick={() => void runNow()} disabled={running}>
+              {running ? "Running…" : "Run feasibility"}
+            </button>
+            <button type="button" className={`${ui.btn} ${ui.outline}`} onClick={onBack}>Back to cohorts</button>
+          </div>
+        </div>
+      </header>
 
       {runProblem && (
-        <p role="alert">
+        <p role="alert" className={styles.problem}>
           <span>{runProblem.message}</span>
           {runProblem.reference && <span> Reference: {runProblem.reference}</span>}
         </p>
       )}
 
-      {shown === null && <p>This cohort has not been run yet.</p>}
       {/* the message about the run just attempted is already shown above; do not say it twice */}
       {shown !== null && shown.status !== "success" && runProblem?.runId !== shown.id && <RunProblem run={shown} />}
-      {shown !== null && shown.status === "success" && shown.step_counts && (
-        <>
-          <p>
-            <strong>Final count</strong>: <span data-testid="final-count">{shown.final_count === null ? "-" : formatCount(shown.final_count)}</span>
-          </p>
+
+      <section aria-labelledby="results-overview" className={ui.card}>
+        <h3 id="results-overview" className={ui.cardTitle}>Overview</h3>
+        {shown === null && <p className={styles.muted}>This cohort has not been run yet.</p>}
+        {shown !== null && (
+          <div className={styles.overview}>
+            <div>
+              {shown.status === "success" && (
+                <>
+                  <strong className={styles.eyebrow}>Final count</strong>
+                  <span className={styles.bigNumber} data-testid="final-count">
+                    {shown.final_count === null ? "-" : formatCount(shown.final_count)}
+                  </span>
+                  <p className={styles.subtitle}>Final eligible population</p>
+                </>
+              )}
+              <p className={styles.meta}>Run {formatTime(shown.created_at)} · {duration(shown.duration_ms)}</p>
+            </div>
+            <StatusBadge status={shown.status} testId="run-status" />
+          </div>
+        )}
+      </section>
+
+      <section aria-labelledby="results-waterfall" className={ui.card}>
+        <h3 id="results-waterfall" className={ui.cardTitle}>Attrition waterfall</h3>
+        {shown !== null && shown.status === "success" && shown.step_counts ? (
           <Waterfall steps={shown.step_counts} />
-        </>
-      )}
+        ) : (
+          <p className={styles.muted}>No steps to show.</p>
+        )}
+      </section>
 
-      <h3>Baseline</h3>
-      {shownBaseline ? <BaselineTables baseline={shownBaseline} /> : <p>Run the cohort to see the baseline table.</p>}
+      <section aria-labelledby="results-baseline" className={ui.card}>
+        <h3 id="results-baseline" className={ui.cardTitle}>Baseline</h3>
+        {shownBaseline ? (
+          <BaselineTables baseline={shownBaseline} />
+        ) : (
+          <p className={styles.muted}>Run the cohort to see the baseline table.</p>
+        )}
+        <p className={styles.note}>{shownBaseline?.comorbidity_note ?? OMITTED_NOTE}</p>
+      </section>
 
-      <h3>History</h3>
-      {runs.length > 0 && (
-        <table aria-label="Run history">
-          <thead>
-            <tr><th>Time</th><th>Status</th><th>Final count</th><th>Duration</th><th>Reference</th></tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.id}>
-                <td>{formatTime(run.created_at)}</td>
-                <td>{STATUS_TEXT[run.status]}</td>
-                <td>{run.final_count === null ? "-" : formatCount(run.final_count)}</td>
-                <td>{duration(run.duration_ms)}</td>
-                <td>{run.status === "success" ? <button type="button" onClick={() => setSelectedId(run.id)}>View</button> : run.trace_id}</td>
+      <section aria-labelledby="results-history" className={ui.card}>
+        <h3 id="results-history" className={ui.cardTitle}>Run history</h3>
+        {runs.length > 0 ? (
+          <table aria-label="Run history" className={styles.table}>
+            <thead>
+              <tr>
+                <th scope="col">Time</th><th scope="col">Status</th><th scope="col">Final count</th>
+                <th scope="col">Duration</th><th scope="col">Reference</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr key={run.id}>
+                  <td id={`run-time-${run.id}`}>{formatTime(run.created_at)}</td>
+                  <td><StatusBadge status={run.status} /></td>
+                  <td className={styles.numeric}>{run.final_count === null ? "-" : formatCount(run.final_count)}</td>
+                  <td className={styles.numeric}>{duration(run.duration_ms)}</td>
+                  <td className={styles.reference}>
+                    {run.status === "success" ? (
+                      <button type="button" className={ui.pill} aria-describedby={`run-time-${run.id}`}
+                        onClick={() => setSelectedId(run.id)}>View</button>
+                    ) : run.trace_id}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className={styles.muted}>No runs yet.</p>
+        )}
+      </section>
     </section>
   );
 }
