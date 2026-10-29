@@ -60,12 +60,17 @@ describe("Given a completed run, then the final count and a bar for each step ar
     expect((bars[0].firstElementChild as HTMLElement).style.width).toBe("100%");
   });
 
-  it("lists each step's label and count beside its bar", async () => {
+  it("lists each step's label and count as text beside its bar", async () => {
     loaded([run()]);
     show();
     const waterfall = await screen.findByRole("list", { name: "Attrition waterfall" });
-    const items = within(waterfall).getAllByRole("listitem").map((li) => li.textContent);
-    expect(items).toEqual(["Step 1920", "Step 2552", "Step 3481"]);
+    const items = within(waterfall).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    ["552", "481"].forEach((count, i) => {
+      expect(within(items[i + 1]).getByText(`Step ${i + 2}`)).toBeInTheDocument();
+      expect(within(items[i + 1]).getByText(count)).toBeInTheDocument();
+    });
+    expect(within(items[0]).getByText("920")).toBeInTheDocument();
   });
 
   it("formats large counts with separators", async () => {
@@ -75,12 +80,42 @@ describe("Given a completed run, then the final count and a bar for each step ar
     expect(screen.getByText("12,345")).toBeInTheDocument();
   });
 
-  it("does not print a 'removed' number per step (a presentation choice: the bars show where it shrinks)", async () => {
+  it("shows each step's drop from the previous step, absolute and as a percent of it", async () => {
     loaded([run()]);
     show();
-    await screen.findAllByRole("meter");
-    expect(screen.queryByText(/removed/i)).not.toBeInTheDocument();
-    expect(screen.queryByText("368")).not.toBeInTheDocument(); // 920 - 552
+    const items = within(await screen.findByRole("list", { name: "Attrition waterfall" })).getAllByRole("listitem");
+    expect(within(items[0]).getByText("First step, no previous step")).toBeInTheDocument(); // nothing to drop from
+    expect(within(items[0]).queryByText(/%/)).not.toBeInTheDocument();
+    expect(within(items[1]).getByText("−368 (40%)")).toBeInTheDocument(); // 920 -> 552
+    expect(within(items[2]).getByText("−71 (12.9%)")).toBeInTheDocument(); // 552 -> 481, of 552
+  });
+});
+
+describe("Given a run, then the overview card shows the final count, its meaning and the status", () => {
+  it("shows the final count large, with the subtitle and a status badge that says the status in words", async () => {
+    loaded([run()]);
+    show();
+    const overview = await screen.findByRole("region", { name: "Overview" });
+    expect(within(overview).getByTestId("final-count")).toHaveTextContent("481");
+    expect(within(overview).getByText("Final eligible population")).toBeInTheDocument();
+    expect(within(overview).getByTestId("run-status")).toHaveTextContent("Success");
+  });
+
+  it("shows a failed or timed-out run's status in words, with no final count", async () => {
+    loaded([run({ id: "t", status: "timeout", step_counts: null, final_count: null, trace_id: "feed0005" })]);
+    show();
+    const overview = await screen.findByRole("region", { name: "Overview" });
+    expect(within(overview).getByTestId("run-status")).toHaveTextContent("Timed out");
+    expect(within(overview).queryByTestId("final-count")).not.toBeInTheDocument();
+  });
+
+  it("puts each part in its own card", async () => {
+    loaded([run()]);
+    show();
+    await screen.findByTestId("final-count");
+    for (const name of ["Overview", "Attrition waterfall", "Baseline", "Run history"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
   });
 });
 
@@ -93,6 +128,23 @@ describe("Given a step with 1 to 10 patients, then it displays <11", () => {
     expect(await screen.findByTestId("final-count")).toHaveTextContent("<11");
     const waterfall = screen.getByRole("list", { name: "Attrition waterfall" });
     expect(within(waterfall).getAllByRole("listitem")[2]).toHaveTextContent("Step 3<11");
+  });
+
+  it("computes no drop for a suppressed step, so the hidden count cannot be worked out from a delta or percent", async () => {
+    loaded([small()]);
+    show();
+    const items = within(await screen.findByRole("list", { name: "Attrition waterfall" })).getAllByRole("listitem");
+    expect(within(items[2]).getByText("Not shown")).toBeInTheDocument();
+    expect(items[2].textContent?.replace("Step 3", "")).not.toMatch(/\d|%|−/); // only <11 and no number at all
+  });
+
+  it("computes no drop for the step after a suppressed one either", async () => {
+    loaded([run({ step_counts: steps([920, "<11", 0]), final_count: 0 })]);
+    show();
+    const items = within(await screen.findByRole("list", { name: "Attrition waterfall" })).getAllByRole("listitem");
+    expect(within(items[1]).getByText("Not shown")).toBeInTheDocument();
+    expect(within(items[2]).getByText("Not shown")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Attrition waterfall" }).textContent).not.toMatch(/[−%]/);
   });
 
   it("draws the suppressed step as a labelled image, not as a meter with a value", async () => {
@@ -354,3 +406,39 @@ describe("Loading and errors", () => {
     expect(onBack).toHaveBeenCalled();
   });
 });
+
+describe("Header and navigation", () => {
+  it("has a back link to the cohort list besides the Back to cohorts button, and Run feasibility", async () => {
+    loaded([]);
+    const onBack = vi.fn();
+    render(<Results cohortId={ID} onBack={onBack} />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Cohort list" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Run feasibility" })).toBeInTheDocument();
+  });
+});
+
+describe("Always-visible suppression note", () => {
+  it("says conditions under 11 patients are omitted before any baseline has been loaded", async () => {
+    loaded([run()]);
+    show();
+    await screen.findByTestId("final-count");
+    expect(screen.getByText("Conditions with fewer than 11 patients are not shown.")).toBeInTheDocument();
+  });
+});
+
+describe("Tables are accessible", () => {
+  it("gives every table column headers, and the history View buttons are described by their run's time", async () => {
+    loaded([run()], { [RUN]: { status: 201, body: { ...run({ id: "fresh" }), baseline: BASELINE } } });
+    show();
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Run feasibility" }));
+    await screen.findByRole("table", { name: "Baseline by age and sex" });
+    for (const table of screen.getAllByRole("table")) {
+      expect(within(table).getAllByRole("columnheader").length).toBeGreaterThan(0);
+    }
+    const history = screen.getByRole("table", { name: "Run history" });
+    const view = within(history).getAllByRole("button", { name: "View" })[0];
+    expect(view).toHaveAccessibleDescription(/2026-10-27 15:04 UTC/);
+  });
+});
+
