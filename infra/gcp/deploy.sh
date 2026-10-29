@@ -52,6 +52,11 @@ PROJECT_ID="${PROJECT_ID-}"; REGION="${REGION-}"; RUNTIME_SA="${RUNTIME_SA-}"
 # an environment only ever runs as its own runtime account (cohortlens-run-dev / cohortlens-run-prod)
 [[ "$RUNTIME_SA" == "cohortlens-run-${ENVIRONMENT}@"* ]] || refuse "RUNTIME_SA must be the cohortlens-run-${ENVIRONMENT} account for --env ${ENVIRONMENT}"
 
+# optional: export the api's telemetry to Grafana Cloud (a repository variable; the credential is a Secret Manager secret
+# made by scripts/store_otlp_secret.sh, never an argument or a variable)
+OTLP_ENDPOINT="${OTLP_ENDPOINT-}"
+[[ -z "$OTLP_ENDPOINT" || "$OTLP_ENDPOINT" =~ ^https://[a-z0-9-]+(\.[a-z0-9-]+)*\.grafana\.net/otlp$ ]] \
+  || refuse "OTLP_ENDPOINT must be a Grafana Cloud OTLP URL (https://<stack>.grafana.net/otlp)"
 PYTHON="$(command -v python3 || command -v python || true)"
 [ -n "$PYTHON" ] || refuse "python is required to read the traffic of a service"
 SMOKE="${SMOKE_SCRIPT:-$(dirname "$0")/../../scripts/smoke_cloud.sh}"
@@ -137,9 +142,14 @@ gcloud run jobs deploy "$JOB" --image="$API_IMAGE" --service-account="$RUNTIME_S
   --max-retries=0 --task-timeout=300s "${TARGET[@]}"
 gcloud run jobs execute "$JOB" --wait "${TARGET[@]}"
 
+API_ENV_VARS="SERVICE_VERSION=${VERSION},DEPLOYMENT_ENVIRONMENT=${ENVIRONMENT}"
+API_SECRETS="DATABASE_URL_APP=${APP_SECRET}:latest,DATABASE_URL_READER=${READER_SECRET}:latest"
+if [ -n "$OTLP_ENDPOINT" ]; then
+  API_ENV_VARS+=",OTEL_EXPORTER_OTLP_ENDPOINT=${OTLP_ENDPOINT}"
+  API_SECRETS+=",OTEL_EXPORTER_OTLP_HEADERS=cohortlens-${ENVIRONMENT}-otlp-headers:latest"
+fi
 deploy_service "$API" --expect-version "$VERSION" -- --image="$API_IMAGE" --service-account="$RUNTIME_SA" --port=8000 --allow-unauthenticated \
-  --set-secrets="DATABASE_URL_APP=${APP_SECRET}:latest,DATABASE_URL_READER=${READER_SECRET}:latest" \
-  --set-env-vars="SERVICE_VERSION=${VERSION},DEPLOYMENT_ENVIRONMENT=${ENVIRONMENT}"
+  --set-secrets="$API_SECRETS" --set-env-vars="$API_ENV_VARS"
 
 API_URL="$(service_url "$API")"
 API_HOST="${API_URL#https://}"

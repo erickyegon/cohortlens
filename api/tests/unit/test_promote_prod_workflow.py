@@ -47,3 +47,7 @@ def test_untrusted_text_never_reaches_the_shell_inline():
 def test_third_party_actions_are_the_ones_the_repository_already_uses_or_google_s_own():
     uses = set(re.findall(r"uses: ([\w./-]+)@", WORKFLOW))
     assert uses <= {"actions/checkout", "google-github-actions/auth", "google-github-actions/setup-gcloud"}
+
+
+def test_the_otlp_endpoint_is_a_repository_variable_not_a_secret():
+    assert "OTLP_ENDPOINT: ${{ vars.GCP_OTLP_ENDPOINT }}" in WORKFLOW

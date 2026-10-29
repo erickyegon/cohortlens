@@ -44,3 +44,7 @@ def test_third_party_actions_are_the_ones_the_repository_already_uses_or_google_
     uses = set(re.findall(r"uses: ([\w./-]+)@", WORKFLOW))
     assert uses <= {"actions/checkout", "docker/setup-buildx-action", "docker/build-push-action",
                     "google-github-actions/auth", "google-github-actions/setup-gcloud"}
+
+
+def test_the_otlp_endpoint_is_a_repository_variable_not_a_secret():
+    assert "OTLP_ENDPOINT: ${{ vars.GCP_OTLP_ENDPOINT }}" in WORKFLOW

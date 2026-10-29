@@ -33,6 +33,7 @@ jobs:
       REGION: ${{ vars.GCP_REGION }}
       REGISTRY: ${{ vars.GCP_ARTIFACT_REGISTRY }}
       RUNTIME_SA: ${{ vars.GCP_RUNTIME_SA_DEV }}
+      OTLP_ENDPOINT: ${{ vars.GCP_OTLP_ENDPOINT }}  # optional: Grafana Cloud OTLP endpoint (docs/observability.md)
     steps:
       - name: Check that the Google Cloud variables are set
         run: |

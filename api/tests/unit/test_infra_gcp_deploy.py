@@ -361,3 +361,47 @@ def test_traffic_that_changed_during_the_deploy_is_not_overwritten(tmp_path):
 def test_the_first_deploy_of_a_service_has_nothing_to_compare(tmp_path):
     calls, _ = deployed(tmp_path, env={"FAKE_EXISTS": "0"})
     assert json_reads(calls, "cohortlens-api-dev") == [] and json_reads(calls, "cohortlens-web-dev") == []
+
+
+# ---- issue #22: the api exports OTLP to Grafana Cloud when an endpoint is configured ---------------------------
+
+OTLP = "https://otlp-gateway-prod-us-east-2.grafana.net/otlp"
+
+
+def test_without_an_otlp_endpoint_nothing_about_telemetry_is_set(tmp_path):
+    for env in ({}, {"OTLP_ENDPOINT": ""}):
+        calls, _ = deployed(tmp_path, env=env)
+        text = " ".join(" ".join(c) for c in calls)
+        assert "OTEL_" not in text and "otlp" not in text.lower()
+
+
+def test_with_an_endpoint_only_the_api_gets_it_and_the_credential_comes_from_secret_manager(tmp_path):
+    calls, _ = deployed(tmp_path, env={"OTLP_ENDPOINT": OTLP})
+    api = starting(calls, "run", "deploy", "cohortlens-api-dev")[0]
+    web = starting(calls, "run", "deploy", "cohortlens-web-dev")[0]
+    assert flag(api, "set-env-vars") == (f"SERVICE_VERSION={SHA},DEPLOYMENT_ENVIRONMENT=dev,"
+                                         f"OTEL_EXPORTER_OTLP_ENDPOINT={OTLP}")
+    assert flag(api, "set-secrets") == ("DATABASE_URL_APP=cohortlens-dev-database-url-app:latest,"
+                                        "DATABASE_URL_READER=cohortlens-dev-database-url-reader:latest,"
+                                        "OTEL_EXPORTER_OTLP_HEADERS=cohortlens-dev-otlp-headers:latest")
+    assert "OTEL_" not in " ".join(web)
+    migrate = starting(calls, "run", "jobs", "deploy")[0]
+    assert "OTEL_" not in " ".join(migrate)  # the migration job exports nothing
+    assert "Authorization" not in " ".join(" ".join(c) for c in calls)  # the credential is never on a command line
+
+
+def test_prod_uses_its_own_header_secret(tmp_path):
+    calls, _ = deployed(tmp_path, args=PROD_ARGS, env={**PROD_ENV, "OTLP_ENDPOINT": OTLP})
+    api = starting(calls, "run", "deploy", "cohortlens-api-prod")[0]
+    assert "OTEL_EXPORTER_OTLP_HEADERS=cohortlens-prod-otlp-headers:latest" in flag(api, "set-secrets")
+    assert "dev-otlp" not in " ".join(api)
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://otlp-gateway-prod-us-east-2.grafana.net/otlp", "https://evil.example.com/otlp",
+    "https://otlp-gateway-prod-us-east-2.grafana.net.evil.io/otlp", "https://x.grafana.net/otlp/v1/traces",
+    "https://x.grafana.net/otlp,other=1", "not a url", "https://user:pw@x.grafana.net/otlp",
+])
+def test_an_endpoint_that_is_not_a_grafana_cloud_otlp_url_is_refused_before_any_command_runs(tmp_path, endpoint):
+    result, calls, _ = run_deploy(tmp_path, env={"OTLP_ENDPOINT": endpoint})
+    assert result.returncode != 0 and calls == []
