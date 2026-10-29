@@ -135,7 +135,7 @@ describe("Given a step with 1 to 10 patients, then it displays <11", () => {
     show();
     const items = within(await screen.findByRole("list", { name: "Attrition waterfall" })).getAllByRole("listitem");
     expect(within(items[2]).getByText("Not shown")).toBeInTheDocument();
-    expect(items[2].textContent?.replace("Step 3", "")).not.toMatch(/\d|%|−/); // only <11 and no number at all
+    expect(items[2].textContent?.replace("Step 3", "").replace("<11", "")).not.toMatch(/\d|%|−/); // nothing but <11: no number at all
   });
 
   it("computes no drop for the step after a suppressed one either", async () => {
