@@ -14,6 +14,7 @@ interface Props {
 
 const SEXES: [string, string][] = [["F", "Female"], ["M", "Male"], ["other", "Other"]];
 const STATUS_TEXT: Record<Run["status"], string> = { success: "Success", failed: "Failed", timeout: "Timed out" };
+const HISTORY_PREVIEW = 5; // the history shows this many of the newest runs until "Show all" is pressed
 const OMITTED_NOTE = "Conditions with fewer than 11 patients are not shown."; // the API's note, shown until it has sent one
 
 const newestFirst = (runs: Run[]) =>
@@ -140,14 +141,16 @@ export function Results({ cohortId, onBack }: Props) {
   const [cohort, setCohort] = useState<Cohort | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [baseline, setBaseline] = useState<{ runId: string; baseline: Baseline } | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [problem, setProblem] = useState<string | null>(null); // why loading failed
   const [runProblem, setRunProblem] = useState<{ message: string; reference: string | null; runId: string | null } | null>(null);
   const [running, setRunning] = useState(false);
 
   /** Reload the history; `keep` (the run just made) stays in the list even if the server has not returned it yet. */
   const refreshRuns = useCallback(async (keep?: Run) => {
-    const listed = await api.listRuns(cohortId);
+    const fetched = await api.listRuns(cohortId);
+    // an API that does not list baselines yet (an older revision) must not hide the one the run just returned
+    const listed = keep?.baseline ? fetched.map((r) => (r.id === keep.id && !r.baseline ? { ...r, baseline: keep.baseline } : r)) : fetched;
     setRuns(newestFirst(keep && !listed.some((r) => r.id === keep.id) ? [keep, ...listed] : listed));
   }, [cohortId]);
 
@@ -172,10 +175,8 @@ export function Results({ cohortId, onBack }: Props) {
     try {
       const fresh = await api.runCohort(cohortId);
       setSelectedId(fresh.id);
-      if (fresh.baseline) setBaseline({ runId: fresh.id, baseline: fresh.baseline });
-      const record: Run = { ...fresh, baseline: undefined }; // the history holds counts only; the baseline is kept apart
-      setRuns((previous) => newestFirst([record, ...(previous ?? []).filter((r) => r.id !== fresh.id)]));
-      await refreshRuns(record).catch(() => undefined);
+      setRuns((previous) => newestFirst([fresh, ...(previous ?? []).filter((r) => r.id !== fresh.id)]));
+      await refreshRuns(fresh).catch(() => undefined);
     } catch (error) {
       // the API records a failed or timed-out run and names it in the error body
       const recordedId = error instanceof ApiError && typeof error.body.run_id === "string" ? error.body.run_id : null;
@@ -195,7 +196,9 @@ export function Results({ cohortId, onBack }: Props) {
   if (cohort === null || runs === null) return <p role="status">Loading results…</p>;
 
   const shown = runs.find((r) => r.id === selectedId) ?? runs[0] ?? null;
-  const shownBaseline = shown && baseline?.runId === shown.id ? baseline.baseline : null;
+  const shownBaseline = shown?.baseline ?? null; // stored with the run (already suppressed), so it survives a reload
+  // collapsed, the run being shown stays in the table even when it is older than the newest 5
+  const visibleRuns = runs.filter((r, i) => showAll || i < HISTORY_PREVIEW || r.id === shown?.id);
 
   return (
     <section aria-label="Results">
@@ -259,8 +262,14 @@ export function Results({ cohortId, onBack }: Props) {
         <h3 id="results-baseline" className={ui.cardTitle}>Baseline</h3>
         {shownBaseline ? (
           <BaselineTables baseline={shownBaseline} />
-        ) : (
+        ) : shown === null ? (
           <p className={styles.muted}>Run the cohort to see the baseline table.</p>
+        ) : shown.status === "success" ? (
+          <p className={styles.muted}>
+            No baseline was kept for this run, which was made before baselines were stored. Run the cohort again to get one.
+          </p>
+        ) : (
+          <p className={styles.muted}>A failed or timed-out run has no baseline.</p>
         )}
         <p className={styles.note}>{shownBaseline?.comorbidity_note ?? OMITTED_NOTE}</p>
       </section>
@@ -276,7 +285,7 @@ export function Results({ cohortId, onBack }: Props) {
               </tr>
             </thead>
             <tbody>
-              {runs.map((run) => (
+              {visibleRuns.map((run) => (
                 <tr key={run.id}>
                   <td id={`run-time-${run.id}`}>{formatTime(run.created_at)}</td>
                   <td><StatusBadge status={run.status} /></td>
@@ -294,6 +303,12 @@ export function Results({ cohortId, onBack }: Props) {
           </table>
         ) : (
           <p className={styles.muted}>No runs yet.</p>
+        )}
+        {runs.length > HISTORY_PREVIEW && (
+          <button type="button" className={`${ui.btn} ${ui.outline}`} aria-expanded={showAll}
+            onClick={() => setShowAll((value) => !value)}>
+            {showAll ? "Show fewer" : `Show all (${runs.length})`}
+          </button>
         )}
       </section>
     </section>

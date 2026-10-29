@@ -26,4 +26,5 @@ cohort_run = Table(
     Column("trace_id", Text),
     Column("service_version", Text),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    Column("baseline", JSONB),  # suppressed baseline of a successful run; NULL before 0002
 )

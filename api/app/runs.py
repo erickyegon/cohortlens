@@ -103,20 +103,31 @@ def _run_json(row, baseline: PublicBaseline | None = None) -> dict:
     return body
 
 
+def _history_json(row) -> dict:
+    """A run in the history: the stored baseline comes with it (`null` for a failed run and for a run made before
+    baselines were stored)."""
+    return {**_run_json(row), "baseline": row.baseline}
+
+
 def _load_definition(cohort_id: uuid.UUID):
     with app_engine().connect() as conn:
         return conn.execute(select(cohorts.c.definition).where(cohorts.c.id == cohort_id)).one_or_none()
 
 
-def _record(cohort_id: uuid.UUID, status: str, trace_id: str, duration_ms: int, steps: list[PublicStepCount] | None):
-    """Store the run. `step_counts` holds the suppressed values; `final_count` the exact number only when it is a real
-    number (a suppressed `"<11"` cannot be an integer and the exact small count must not be stored)."""
+def _record(cohort_id: uuid.UUID, status: str, trace_id: str, duration_ms: int, steps: list[PublicStepCount] | None,
+            baseline: PublicBaseline | None = None):
+    """Store the run. `step_counts` and `baseline` hold the suppressed values (a `PublicBaseline` is what the API may
+    return, never the exact one); `final_count` the exact number only when it is a real number (a suppressed `"<11"`
+    cannot be an integer and the exact small count must not be stored)."""
+    if baseline is not None and not isinstance(baseline, PublicBaseline):
+        raise TypeError("only a suppressed PublicBaseline may be stored")  # never the exact one
     step_counts = [asdict(step) for step in steps] if steps is not None else None
     final = steps[-1].persons if steps else None
     statement = insert(runs_table).values(
         cohort_id=cohort_id, status=status, step_counts=step_counts,
         final_count=final if isinstance(final, int) else None, duration_ms=duration_ms, trace_id=trace_id,
-        service_version=SERVICE_VERSION).returning(*runs_table.c)
+        service_version=SERVICE_VERSION, baseline=asdict(baseline) if baseline is not None else None,
+    ).returning(*runs_table.c)
     with app_engine().begin() as conn:
         return conn.execute(statement).one()
 
@@ -191,7 +202,8 @@ async def _run_and_record(request: Request, parsed, row, trace_id: str, started:
         return error_response(request, 500, "Something went wrong running this cohort.",
                               extra=_run_ref(recorded)), "failed"
 
-    recorded = await run_in_threadpool(_record, parsed, "success", trace_id, _elapsed_ms(started), outcome.steps)
+    recorded = await run_in_threadpool(_record, parsed, "success", trace_id, _elapsed_ms(started), outcome.steps,
+                                       outcome.baseline)
     run_span.set_attribute("cohortlens.step_count", len(outcome.steps))
     return _run_json(recorded, outcome.baseline), "success"
 
@@ -213,4 +225,4 @@ async def run_history(cohort_id: str, request: Request):
     rows = await run_in_threadpool(_history, parsed, int(raw_limit))
     if rows is None:
         return error_response(request, 404, "Cohort not found")
-    return [_run_json(row) for row in rows]
+    return [_history_json(row) for row in rows]

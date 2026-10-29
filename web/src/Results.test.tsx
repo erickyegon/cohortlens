@@ -362,7 +362,31 @@ describe("Baseline table", () => {
     expect(screen.queryByRole("table", { name: "Most common conditions" })).not.toBeInTheDocument();
   });
 
-  it("shows the baseline only for the run it belongs to, not for another run in the history", async () => {
+  it("shows each run's own stored baseline when it is viewed in the history", async () => {
+    const other = run({ id: "other", created_at: "2026-10-20T08:00:00+00:00", baseline: {
+      ...BASELINE, age_sex: BASELINE.age_sex.map((cell) => (cell.persons === 90 ? { ...cell, persons: 77 } : cell)) } });
+    loaded([run({ baseline: BASELINE }), other]);
+    show();
+    const user = userEvent.setup();
+    const ageSex = await screen.findByRole("table", { name: "Baseline by age and sex" });
+    expect(within(ageSex).getByText("90")).toBeInTheDocument();
+    const history = screen.getByRole("table", { name: "Run history" });
+    await user.click(within(within(history).getAllByRole("row")[2]).getByRole("button", { name: "View" })); // the older run
+    const older = screen.getByRole("table", { name: "Baseline by age and sex" });
+    expect(within(older).getByText("77")).toBeInTheDocument();
+    expect(within(older).queryByText("90")).not.toBeInTheDocument();
+  });
+
+  it("shows the stored baseline of the latest run after a reload, without running the cohort again", async () => {
+    loaded([run({ baseline: BASELINE })]);
+    show();
+    await screen.findByTestId("final-count");
+    expect(screen.getByRole("table", { name: "Baseline by age and sex" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Most common conditions" })).toBeInTheDocument();
+    expect(screen.queryByText("Run the cohort to see the baseline table.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the baseline of a run just made in the list, so viewing another run and coming back still shows it", async () => {
     const other = run({ id: "other", created_at: "2026-10-20T08:00:00+00:00" });
     loaded([other], { [RUN]: { status: 201, body: { ...run({ id: "fresh" }), baseline: BASELINE } } });
     show();
@@ -370,17 +394,88 @@ describe("Baseline table", () => {
     await user.click(await screen.findByRole("button", { name: "Run feasibility" }));
     await screen.findByRole("table", { name: "Baseline by age and sex" });
     const history = screen.getByRole("table", { name: "Run history" });
-    await user.click(within(within(history).getAllByRole("row")[2]).getByRole("button", { name: "View" })); // the older run
-    expect(screen.queryByRole("table", { name: "Baseline by age and sex" })).not.toBeInTheDocument();
-    expect(screen.getByText("Run the cohort to see the baseline table.")).toBeInTheDocument();
+    await user.click(within(within(history).getAllByRole("row")[2]).getByRole("button", { name: "View" }));
+    await user.click(within(within(history).getAllByRole("row")[1]).getByRole("button", { name: "View" }));
+    expect(screen.getByRole("table", { name: "Baseline by age and sex" })).toBeInTheDocument();
   });
 
-  it("is not stored with a run, so reopening the screen says to run the cohort to see it", async () => {
-    loaded([run()]);
+  it("says no baseline was kept for a run made before baselines were stored, instead of asking to run again", async () => {
+    loaded([run()]); // no baseline in the stored run
     show();
     await screen.findByTestId("final-count");
     expect(screen.queryByRole("table", { name: "Baseline by age and sex" })).not.toBeInTheDocument();
+    expect(screen.getByText("No baseline was kept for this run, which was made before baselines were stored. Run the cohort again to get one."))
+      .toBeInTheDocument();
+    expect(screen.queryByText("Run the cohort to see the baseline table.")).not.toBeInTheDocument();
+  });
+
+  it("asks to run the cohort only when it has never been run", async () => {
+    loaded([]);
+    show();
+    expect(await screen.findByText("This cohort has not been run yet.")).toBeInTheDocument();
     expect(screen.getByText("Run the cohort to see the baseline table.")).toBeInTheDocument();
+  });
+});
+
+describe("The run history shows the latest 5 runs and can show all", () => {
+  const many = (count: number) => Array.from({ length: count }, (_, i) => run({
+    id: `r${i}`, created_at: `2026-10-27T15:${String(59 - i).padStart(2, "0")}:00+00:00`, trace_id: `trace-${i}` }));
+  const bodyRows = () => within(screen.getByRole("table", { name: "Run history" })).getAllByRole("row").slice(1);
+
+  it("shows only the 5 newest of 7 runs, with a Show all (7) button", async () => {
+    loaded(many(7));
+    show();
+    await screen.findByTestId("final-count");
+    expect(bodyRows()).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "Show all (7)" })).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Run history" });
+    expect(within(table).getByText(/15:59 UTC/)).toBeInTheDocument();
+    expect(within(table).queryByText(/15:54 UTC/)).not.toBeInTheDocument(); // the 6th and 7th (15:54, 15:53) are hidden
+  });
+
+  it("shows every run after Show all, and goes back with Show fewer", async () => {
+    loaded(many(7));
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Show all (7)" }));
+    expect(bodyRows()).toHaveLength(7);
+    await user.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(bodyRows()).toHaveLength(5);
+    expect(screen.getByRole("button", { name: "Show all (7)" })).toBeInTheDocument();
+  });
+
+  it("keeps a run opened with View visible after Show fewer, even when it is older than the 5 shown", async () => {
+    loaded(many(7));
+    show();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Show all (7)" }));
+    await user.click(within(bodyRows()[6]).getByRole("button", { name: "View" })); // the oldest run
+    await user.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(bodyRows()).toHaveLength(6); // the 5 newest and the run being shown
+    expect(within(screen.getByRole("table", { name: "Run history" })).getByText(/15:53 UTC/)).toBeInTheDocument();
+  });
+
+  it("says a timed-out run has no baseline too", async () => {
+    loaded([run({ status: "timeout", step_counts: null, final_count: null })]);
+    show();
+    expect(await screen.findByText("A failed or timed-out run has no baseline.")).toBeInTheDocument();
+  });
+
+  it("has no toggle when there are 5 runs or fewer", async () => {
+    loaded(many(5));
+    show();
+    await screen.findByTestId("final-count");
+    expect(bodyRows()).toHaveLength(5);
+    expect(screen.queryByRole("button", { name: /Show all|Show fewer/ })).not.toBeInTheDocument();
+  });
+
+  it("reports whether the full list is shown to assistive technology", async () => {
+    loaded(many(6));
+    show();
+    const toggle = await screen.findByRole("button", { name: "Show all (6)" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.setup().click(toggle);
+    expect(screen.getByRole("button", { name: "Show fewer" })).toHaveAttribute("aria-expanded", "true");
   });
 });
 

@@ -241,13 +241,57 @@ def test_a_stored_definition_that_no_longer_validates_is_a_422_and_a_failed_run(
 
 # ---- Given three runs, then GET /cohorts/{id}/runs lists them newest first -----------------------------------------
 
+# ---- Given a successful run, then its baseline is stored (suppressed) and comes back with the history ----------------
+
+def test_the_baseline_is_stored_with_the_run_exactly_as_it_was_returned(client, api_env):
+    response = run(client, save(client))
+    row = rows(api_env, "select * from app.cohort_run")[0]
+    assert row["baseline"] == response.json()["baseline"]
+    assert {c["persons"] for c in row["baseline"]["age_sex"]} == {0, "<11"}  # suppression is applied before storing
+    assert row["baseline"]["comorbidity_note"] == "Conditions with fewer than 11 patients are not shown."
+
+
+def test_no_exact_small_count_reaches_the_stored_baseline(client, api_env):
+    run(client, save(client))  # 10 patients end up in the final step; their age/sex cells hold 1 to 9
+    stored = json.dumps(rows(api_env, "select baseline from app.cohort_run")[0]["baseline"])
+    assert all(f'"persons": {n}' not in stored for n in range(1, 11))
+
+
+def test_the_history_returns_each_successful_runs_baseline_and_none_for_a_failed_run(client, monkeypatch):
+    import app.runs as runs
+
+    cohort_id = save(client, INDEX_ONLY)
+    good = run(client, cohort_id).json()
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runs, "execute_run", boom)
+    assert run(client, cohort_id).status_code == 500
+    listing = client.get(f"/cohorts/{cohort_id}/runs").json()
+    assert [r["status"] for r in listing] == ["failed", "success"]
+    assert listing[0]["baseline"] is None
+    assert listing[1]["baseline"] == good["baseline"]
+
+
+def test_a_run_stored_before_baselines_were_kept_has_no_baseline_in_the_history(client, api_env):
+    cohort_id = save(client, INDEX_ONLY)
+    engine = create_engine(api_env.replace("postgresql://", "postgresql+psycopg://", 1))
+    with engine.begin() as conn:
+        conn.execute(text("insert into app.cohort_run (cohort_id, status, step_counts, final_count, duration_ms) "
+                          "values (:c, 'success', '[]'::jsonb, 21, 5)"), {"c": cohort_id})
+    engine.dispose()
+    listing = client.get(f"/cohorts/{cohort_id}/runs").json()
+    assert len(listing) == 1 and listing[0]["baseline"] is None
+
+
 def test_three_runs_are_listed_newest_first(client):
     cohort_id = save(client, INDEX_ONLY)
     created = [run(client, cohort_id).json()["id"] for _ in range(3)]
     listing = client.get(f"/cohorts/{cohort_id}/runs")
     assert listing.status_code == 200
     assert [r["id"] for r in listing.json()] == list(reversed(created))
-    assert all("baseline" not in r for r in listing.json())  # history holds counts; the baseline comes with a run
+    assert all(r["baseline"] is not None for r in listing.json())  # every successful run keeps its baseline
     assert listing.json()[0]["step_counts"][-1]["persons"] == 21 and listing.json()[0]["final_count"] == 21
 
 

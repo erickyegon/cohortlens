@@ -21,7 +21,7 @@ from testcontainers.core.container import DockerContainer
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 INIT = ROOT / "db" / "init"
 SEED = ROOT / "data" / "seed" / "omop_subset.sql.gz"
-MIGRATION = ROOT / "api" / "alembic" / "versions" / "0001_app_schema.py"
+MIGRATIONS = sorted((ROOT / "api" / "alembic" / "versions").glob("0*.py"))
 
 READER_PW, APP_PW, SUPER_PW = "reader_t3st", "app_t3st", "super_t3st"
 
@@ -80,6 +80,7 @@ EXPECTED_COLUMNS = {
         "id": ("uuid", "NO"), "cohort_id": ("uuid", "NO"), "status": ("text", "NO"), "step_counts": ("jsonb", "YES"),
         "final_count": ("integer", "YES"), "duration_ms": ("integer", "YES"), "trace_id": ("text", "YES"),
         "service_version": ("text", "YES"), "created_at": ("timestamp with time zone", "NO"),
+        "baseline": ("jsonb", "YES"),
     },
 }
 
@@ -95,18 +96,19 @@ def test_app_tables_have_the_documented_columns(port, table):
 
 def test_version_table_lives_in_the_app_schema_at_head(port):
     with connect("cohortlens_app", APP_PW, port) as c:
-        assert c.execute("select version_num from app.alembic_version").fetchone()[0] == "0001"
+        assert c.execute("select version_num from app.alembic_version").fetchone()[0] == "0002"
 
 
 def test_upgrade_downgrade_upgrade_cycle_works(port):
     alembic("downgrade", "base", port=port)
     alembic("upgrade", "head", port=port)
-    assert "0001" in alembic("current", port=port)
+    assert "0002" in alembic("current", port=port)
 
 
-def test_migration_is_expand_only():
+@pytest.mark.parametrize("migration", MIGRATIONS, ids=lambda path: path.name)
+def test_migration_is_expand_only(migration):
     """Expand-then-contract: upgrade() may create things but never drop or alter them."""
-    tree = ast.parse(MIGRATION.read_text(encoding="utf-8"))
+    tree = ast.parse(migration.read_text(encoding="utf-8"))
     upgrade = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "upgrade")
     called = {n.func.attr for n in ast.walk(upgrade) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
     assert called, "upgrade() should call op.* functions"

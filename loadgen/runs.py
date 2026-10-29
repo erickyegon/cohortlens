@@ -1,9 +1,11 @@
-"""Steady traffic for the chaos drill (issue #27): the reference cohort, run `count` times, `interval` seconds apart.
+"""Steady traffic for the chaos drill (issue #27): a dedicated cohort, run `count` times, `interval` seconds apart.
 
     python loadgen/runs.py --url https://cohortlens-api-dev-<hash>-ul.a.run.app --count 60 --interval 12
 
-It creates the reference cohort once and always deletes it again. Only dev run.app addresses are accepted. Failed runs
-are expected during a drill: they are counted, not fatal. Realistic definitions only (docs/observability.md).
+The cohort is named "Drill: reference cohort (synthetic load)" and has the reference definition. It is found by name or
+created if it is missing, and it is KEPT: the drill's runs fill only its history, never the history of a cohort a
+person uses, and an interrupted drill leaves nothing behind. Only dev run.app addresses are accepted. Failed runs are
+expected during a drill: they are counted, not fatal. Realistic definitions only (docs/observability.md).
 """
 import argparse
 import json
@@ -15,6 +17,7 @@ import urllib.error
 import urllib.request
 
 MAX_COUNT = 500
+DRILL_COHORT_NAME = "Drill: reference cohort (synthetic load)"
 COHORT = pathlib.Path(__file__).resolve().parent.parent / "api" / "tests" / "fixtures" / "reference_cohort.json"
 _URL = re.compile(r"https://cohortlens-(api|web)-dev-[a-z0-9-]+\.a\.run\.app")
 _PREFIX = re.compile(r"/[A-Za-z0-9/_-]*")
@@ -62,21 +65,27 @@ def main(argv=None, send=_send, sleep=time.sleep) -> int:
         print(f"refused: {error}", file=sys.stderr)
         return 2
     base = args.url + args.api_prefix
-    status, created = send("POST", f"{base}/cohorts", json.loads(COHORT.read_text(encoding="utf-8")))
-    if status != 201:
-        print(f"could not create the cohort (HTTP {status})", file=sys.stderr)
+    status, listed = send("GET", f"{base}/cohorts")
+    if status != 200 or not isinstance(listed, list):
+        # without the list a second drill cohort could be created blindly: stop instead
+        print(f"could not read the cohort list (HTTP {status})", file=sys.stderr)
         return 1
-    cohort = f"{base}/cohorts/{created['id']}"
+    named = (c for c in listed if isinstance(c, dict) and c.get("name") == DRILL_COHORT_NAME and c.get("id"))
+    found = next(named, None)
+    if found is None:
+        definition = {**json.loads(COHORT.read_text(encoding="utf-8")), "name": DRILL_COHORT_NAME}
+        status, found = send("POST", f"{base}/cohorts", definition)
+        if status != 201:
+            print(f"could not create the cohort (HTTP {status})", file=sys.stderr)
+            return 1
+    cohort = f"{base}/cohorts/{found['id']}"
     answers: dict = {}
-    try:
-        for number in range(args.count):
-            status, _ = send("POST", f"{cohort}/runs")
-            answers[status] = answers.get(status, 0) + 1
-            print(f"run {number + 1}/{args.count}: HTTP {status}", flush=True)
-            if number + 1 < args.count:
-                sleep(args.interval)
-    finally:
-        send("DELETE", cohort)
+    for number in range(args.count):
+        status, _ = send("POST", f"{cohort}/runs")
+        answers[status] = answers.get(status, 0) + 1
+        print(f"run {number + 1}/{args.count}: HTTP {status}", flush=True)
+        if number + 1 < args.count:
+            sleep(args.interval)
     print("answers:", json.dumps(answers, sort_keys=True))
     return 0
 
