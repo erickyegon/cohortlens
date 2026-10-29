@@ -1,0 +1,14 @@
+[
+  {"stop_reason": "tool_use", "content": [
+    {"type": "text", "text": "A new revision went live 12 minutes ago and the error ratio is high. I will look at the error ratio by revision first."},
+    {"type": "tool_use", "id": "toolu_01", "name": "query_metrics", "input": {"metric": "error_ratio", "window": "10m"}}]},
+  {"stop_reason": "tool_use", "content": [
+    {"type": "tool_use", "id": "toolu_02", "name": "list_revisions", "input": {"service": "api"}}]},
+  {"stop_reason": "tool_use", "content": [
+    {"type": "text", "text": "Only the newest revision fails (62%) and it started serving 12 minutes ago; the previous revision has 120 successful runs and 0% errors. Rolling back."},
+    {"type": "tool_use", "id": "toolu_03", "name": "rollback", "input": {"service": "api", "revision": "cohortlens-api-dev-00006-ok1"}}]},
+  {"stop_reason": "tool_use", "content": [
+    {"type": "tool_use", "id": "toolu_04", "name": "update_incident", "input": {"status": "rolled_back", "summary": "Regression after deploy: error ratio 62% on the newest api revision, 0% on the previous one. Rolled api back to cohortlens-api-dev-00006-ok1."}}]},
+  {"stop_reason": "end_turn", "content": [
+    {"type": "text", "text": "Rolled back and recorded on the incident issue. Recovery should be visible in the error ratio within a few minutes."}]}
+]

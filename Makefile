@@ -4,7 +4,7 @@ up:
 	docker compose up --build
 
 test:
-	python -m pytest api/tests -q -rs
+	python -m pytest api/tests oncall/tests -q -rs
 	cd web && npm test
 
 e2e:
@@ -17,8 +17,10 @@ lint:
 traffic:
 	k6 run loadgen/journey.js
 
+# usage: PROJECT_ID=cohortlens REGION=us-east5 make chaos SCENARIO=s1   (dev only; see docs/oncall.md)
 chaos:
-	@echo "TODO: chaos/$(SCENARIO) (phase 6)" && exit 1
+	@test "$(SCENARIO)" = "s1" || { echo "only SCENARIO=s1 exists"; exit 2; }
+	bash chaos/s1.sh $(ARGS)
 
 verify-seed:
 	bash data/etl/verify_seed.sh
