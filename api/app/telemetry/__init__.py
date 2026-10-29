@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -205,9 +206,14 @@ class Telemetry:
 _state: Telemetry | None = None
 
 
+# one random id per process: Cloud Run runs several instances of a revision, and without it they would all write the
+# same metric series (interleaved cumulative counters that rate() and increase() misread)
+_INSTANCE_ID = uuid.uuid4().hex
+
+
 def _resource() -> Resource:
     return Resource.create({"service.name": SERVICE_NAME, "service.version": revision(),
-                            "deployment.environment": environment()})
+                            "service.instance.id": _INSTANCE_ID, "deployment.environment": environment()})
 
 
 def _remove_handlers() -> None:
@@ -240,6 +246,9 @@ def configure(*, span_exporter=None, metric_readers=None, log_exporter=None, log
                                         description="Cohort runs by outcome")
     run_duration = meter.create_histogram("cohortlens_cohort_run_duration_seconds", unit="s",
                                           description="Wall-clock duration of a cohort run")
+    # a counter series that first appears with value 1 adds nothing to increase(): create every outcome at zero
+    for outcome in sorted(OUTCOMES):
+        runs_counter.add(0, {"outcome": outcome, "environment": environment(), "revision": revision()})
 
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)

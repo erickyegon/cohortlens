@@ -34,6 +34,31 @@ The same code exports to Grafana Cloud when two things are set: the endpoint (no
 
 **Known risk, Cloud Run:** CPU is throttled between requests, so batched export from an idle instance may be delayed or dropped. The exporters flush every 2 s (spans) and 15 s (metrics). If signals arrive late or not at all, the fix is to run the api with CPU always allocated (`--no-cpu-throttling`), at a small cost; check Cloud Logging for `Failed to export` warnings from the api first.
 
+## Dashboard and alert rules (issue #23)
+
+`infra/grafana/` holds a dashboard ("CohortLens core journey") and two alert rules as Grafana's own JSON, with placeholders for the stack's data-source ids. `infra/grafana/apply.sh` fills those in and creates or updates everything through Grafana's HTTP API; running it again changes nothing that is already right. No Terraform.
+
+| Rule | Fires when | For |
+| --- | --- | --- |
+| `CohortRunErrorRateHigh` | at least 10 runs in 5 minutes and more than 5% of them failed or timed out | 2 minutes |
+| `CohortRunLatencyHigh` | at least 20 runs in 10 minutes and p95 run duration above 3 s | 5 minutes |
+
+The minimum-runs guard is part of each query, so a quiet system returns no data, and no data means OK. Every alert carries `service`, `environment`, `agent=oncall` and a `runbook_url` (see `docs/runbooks/`). The behaviour is tested with `promtool test rules` (`infra/grafana/alert-tests.yml`, run by `api/tests/unit/test_grafana_promtool.py` with `promtool` or Docker; skipped if neither exists, so CI without Docker relies on the text checks): eight synthetic environments cover a busy and failing system, a healthy one, a quiet one that fails every run (fewer than 10 runs: silent), timeouts counted as errors, 3.8% errors (below 5%: silent), slow, fast, and quiet-slow (fewer than 20 runs: silent). Five realistic edits to the expressions are shown to fail them. Not covered by these scenarios: the `for` durations (the test rules have no `for`), and fine thresholds (the 5% threshold is proven only within a band, since the closest scenario is 3.8%).
+
+Notes on how the rules behave:
+- The alert queries are instant, evaluated at the current time over their own `[5m]` / `[10m]` range selectors. The rule group `cohortlens` is created with Grafana's default evaluation interval (1 minute), which the `for` durations assume; the provisioning API does not set it.
+- Each API instance exports under its own `service.instance.id`, so instances of one revision never share a series; the alert queries `sum by (environment)` across them. All three outcome series are created at zero when the process starts, so they are in the first export (within 15 s), because `increase()` cannot see a counter that first appears with value 1; a failure inside an instance's first 15 seconds can still be missed, which the sustained `for` durations and the minimum-run guards tolerate. `service.instance.id` is also a default Loki index label (`service_instance_id`), so each Cloud Run instance is its own log stream; the dashboard's log query selects on `service_name` and `deployment_environment` only.
+- `apply.sh` overwrites the dashboard on every run: edits made in the Grafana UI are lost, so change `dashboard.json` instead. Rules are updated in place.
+
+**Service-account token.** In your stack (`https://<stack>.grafana.net`): Administration, Users and access, Service accounts, Add service account; role **Admin** (it must create folders, dashboards and alert rules); Add service account token; copy it once. Then, in a Git Bash window:
+
+```bash
+bash infra/grafana/apply.sh --url https://<stack>.grafana.net --dry-run
+bash infra/grafana/apply.sh --url https://<stack>.grafana.net
+```
+
+The first line only prints the plan. The second asks for the token at a hidden prompt (nothing is echoed; it refuses tracing and piped input, and passes the token to curl on a pipe, so it is in no argument, file or history). Afterwards delete the service account or its token in Grafana if you do not want to keep it.
+
 ## What never leaves the process (issue #21, NFR-3)
 
 - **Allowlist span processor** (`app/telemetry`): a span reaches an exporter with only the attributes `http.request.method`, `http.route` (the route *template*, never the URL), `http.response.status_code`, `cohortlens.outcome`, `cohortlens.rule_count`, `cohortlens.step_count` and `cohortlens.revision`, **and each key only with a value of its own shape**: the method must be one of a closed set (anything else is exported as `_OTHER`, because the method is client-controlled), the route must look like a template, the status an integer 100 to 599, the outcome one of the three outcomes, the counts small integers, the revision `dev` or a git sha. Being on the list is not enough. Every event (where an exception message would be), every link and every status description is dropped. Spans are made by hand; there is no auto-instrumentation, which would add URLs and database statements.

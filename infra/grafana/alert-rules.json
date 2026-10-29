@@ -1,0 +1,166 @@
+[
+  {
+    "uid": "cohortlens-error-rate-high",
+    "title": "CohortRunErrorRateHigh",
+    "ruleGroup": "cohortlens",
+    "folderUID": "__FOLDER_UID__",
+    "orgID": 1,
+    "condition": "C",
+    "for": "2m",
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "isPaused": false,
+    "annotations": {
+      "summary": "Failed or timed-out cohort runs exceed 5% in {{ $labels.environment }}",
+      "description": "More than 5% of cohort runs over the last 5 minutes failed or timed out (at least 10 runs), for 2 minutes. Timeouts count as errors.",
+      "runbook_url": "https://github.com/erickyegon/cohortlens/blob/main/docs/runbooks/CohortRunErrorRateHigh.md"
+    },
+    "labels": {
+      "service": "cohortlens-api",
+      "environment": "{{ $labels.environment }}",
+      "agent": "oncall",
+      "runbook_url": "https://github.com/erickyegon/cohortlens/blob/main/docs/runbooks/CohortRunErrorRateHigh.md"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 300,
+          "to": 0
+        },
+        "datasourceUid": "__PROMETHEUS_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(sum by (environment) (increase(cohortlens_cohort_runs_total{outcome=~\"failed|timeout\"}[5m])) / sum by (environment) (increase(cohortlens_cohort_runs_total[5m])) > 0.05) and on (environment) (sum by (environment) (increase(cohortlens_cohort_runs_total[5m])) >= 10)",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "editorMode": "code"
+        }
+      },
+      {
+        "refId": "B",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "expression": "A",
+          "reducer": "last",
+          "settings": {
+            "mode": "dropNN"
+          },
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          }
+        }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "uid": "cohortlens-latency-high",
+    "title": "CohortRunLatencyHigh",
+    "ruleGroup": "cohortlens",
+    "folderUID": "__FOLDER_UID__",
+    "orgID": 1,
+    "condition": "C",
+    "for": "5m",
+    "noDataState": "OK",
+    "execErrState": "Error",
+    "isPaused": false,
+    "annotations": {
+      "summary": "p95 cohort run duration exceeds 3 s in {{ $labels.environment }}",
+      "description": "The 95th percentile of cohort run duration over the last 10 minutes is above 3 seconds (at least 20 runs), for 5 minutes.",
+      "runbook_url": "https://github.com/erickyegon/cohortlens/blob/main/docs/runbooks/CohortRunLatencyHigh.md"
+    },
+    "labels": {
+      "service": "cohortlens-api",
+      "environment": "{{ $labels.environment }}",
+      "agent": "oncall",
+      "runbook_url": "https://github.com/erickyegon/cohortlens/blob/main/docs/runbooks/CohortRunLatencyHigh.md"
+    },
+    "data": [
+      {
+        "refId": "A",
+        "relativeTimeRange": {
+          "from": 600,
+          "to": 0
+        },
+        "datasourceUid": "__PROMETHEUS_UID__",
+        "model": {
+          "refId": "A",
+          "expr": "(histogram_quantile(0.95, sum by (environment, le) (rate(cohortlens_cohort_run_duration_seconds_bucket[10m]))) > 3) and on (environment) (sum by (environment) (increase(cohortlens_cohort_runs_total[10m])) >= 20)",
+          "instant": true,
+          "range": false,
+          "intervalMs": 1000,
+          "maxDataPoints": 43200,
+          "editorMode": "code"
+        }
+      },
+      {
+        "refId": "B",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "B",
+          "type": "reduce",
+          "expression": "A",
+          "reducer": "last",
+          "settings": {
+            "mode": "dropNN"
+          },
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          }
+        }
+      },
+      {
+        "refId": "C",
+        "datasourceUid": "__expr__",
+        "model": {
+          "refId": "C",
+          "type": "threshold",
+          "expression": "B",
+          "conditions": [
+            {
+              "evaluator": {
+                "type": "gt",
+                "params": [
+                  0
+                ]
+              }
+            }
+          ],
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          }
+        }
+      }
+    ]
+  }
+]

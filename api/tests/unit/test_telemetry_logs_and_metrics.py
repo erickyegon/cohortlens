@@ -103,9 +103,11 @@ def points(reader, name):
 def test_a_run_is_counted_with_outcome_environment_and_revision(wired, outcome):
     _, reader, _, _ = wired
     telemetry.record_run(outcome, 0.42)
-    (point,) = points(reader, "cohortlens_cohort_runs_total")
-    assert point.value == 1
-    assert dict(point.attributes) == {"outcome": outcome, "environment": "test", "revision": SHA}
+    by_outcome = {point.attributes["outcome"]: point for point in points(reader, "cohortlens_cohort_runs_total")}
+    assert by_outcome[outcome].value == 1
+    assert dict(by_outcome[outcome].attributes) == {"outcome": outcome, "environment": "test", "revision": SHA}
+    assert {name: point.value for name, point in by_outcome.items() if name != outcome} == {
+        name: 0 for name in telemetry.OUTCOMES if name != outcome}
 
 
 def test_the_duration_histogram_records_seconds_with_the_same_attributes(wired):
@@ -158,3 +160,24 @@ def test_an_exception_shows_its_class_exactly_once_in_both_the_json_line_and_the
     assert line["exception"] == "KeyError" and line["message"].count("exception=") == 0
     body = str(logs.get_finished_logs()[0].log_record.body)
     assert body.count("exception=KeyError") == 1 and "secret key name" not in body
+
+
+# ---- review findings of #73 ----------------------------------------------------------------------------------------
+
+def test_every_outcome_series_exists_from_startup_so_the_first_failure_is_visible_to_increase(wired):
+    """Prometheus' increase() cannot see a counter that first appears with value 1: pre-create all three at zero."""
+    _, reader, _, _ = wired
+    found = {point.attributes["outcome"]: point.value for point in points(reader, "cohortlens_cohort_runs_total")}
+    assert found == {"success": 0, "failed": 0, "timeout": 0}
+
+
+def test_each_process_has_its_own_instance_id_so_cloud_run_instances_never_share_a_series(wired):
+    """Without service.instance.id every instance of a revision writes the same series and the cumulative counters
+    interleave; the instance id keeps them apart (sum by (environment) in the alert queries merges them again)."""
+    _, reader, _, _ = wired
+    attributes = reader.get_metrics_data().resource_metrics[0].resource.attributes
+    instance = attributes["service.instance.id"]
+    assert isinstance(instance, str) and 8 <= len(instance) <= 64
+    again = InMemoryMetricReader()
+    telemetry.configure(metric_readers=[again])
+    assert again.get_metrics_data().resource_metrics[0].resource.attributes["service.instance.id"] == instance

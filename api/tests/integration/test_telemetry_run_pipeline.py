@@ -44,6 +44,10 @@ class Wired:
         return [point for resource in data.resource_metrics for scope in resource.scope_metrics
                 for metric in scope.metrics if metric.name == name for point in metric.data.data_points]
 
+    def counted_runs(self):
+        """The run counter's series with at least one run: all three outcomes exist at zero from startup."""
+        return [point for point in self.metric_points("cohortlens_cohort_runs_total") if point.value > 0]
+
 
 @pytest.fixture()
 def wired(client):
@@ -126,7 +130,7 @@ def test_a_log_line_for_the_run_carries_the_same_trace_id_as_the_spans(client, w
 def test_a_run_is_counted_and_timed_with_outcome_environment_and_revision(client, wired, monkeypatch):
     monkeypatch.setenv("DEPLOYMENT_ENVIRONMENT", "test")  # read when a run is recorded, so no reconfiguring is needed
     client.post(f"/cohorts/{save(client)}/runs")
-    (counter,) = wired.metric_points("cohortlens_cohort_runs_total")
+    (counter,) = wired.counted_runs()
     assert counter.value == 1 and set(counter.attributes) == {"outcome", "environment", "revision"}
     assert counter.attributes["outcome"] == "success" and counter.attributes["environment"] == "test"
     (histogram,) = wired.metric_points("cohortlens_cohort_run_duration_seconds")
@@ -147,7 +151,7 @@ def test_a_timeout_and_a_failure_are_counted_with_their_own_outcome(client, wire
 
     monkeypatch.setattr(runs, "execute_run", boom)
     assert client.post(f"/cohorts/{cohort_id}/runs").status_code == 500
-    outcomes = sorted(point.attributes["outcome"] for point in wired.metric_points("cohortlens_cohort_runs_total"))
+    outcomes = sorted(point.attributes["outcome"] for point in wired.counted_runs())
     assert outcomes == ["failed", "timeout"]
 
 
@@ -218,7 +222,7 @@ def test_a_run_is_counted_as_failed_even_when_recording_it_fails(client, wired, 
     wired.reset_captured()
     response = client.post(f"/cohorts/{cohort_id}/runs")
     assert response.status_code == 500 and response.headers["X-Trace-Id"]
-    assert [p.attributes["outcome"] for p in wired.metric_points("cohortlens_cohort_runs_total")] == ["failed"]
+    assert [p.attributes["outcome"] for p in wired.counted_runs()] == ["failed"]
     assert [line for line in wired.lines() if "run finished outcome=failed" in line["message"]]
     run_span = by_name(wired.spans.get_finished_spans())["cohort.run"]
     assert run_span.attributes["cohortlens.outcome"] == "failed"
@@ -234,7 +238,7 @@ def test_the_run_span_carries_the_revision(client, wired):
 
 def test_a_run_that_never_started_is_not_counted(client, wired):
     assert client.post("/cohorts/6f1c1f0e-5b1c-4d55-9a0e-0a5f4c2b9a11/runs").status_code == 404
-    assert wired.metric_points("cohortlens_cohort_runs_total") == []
+    assert wired.counted_runs() == []
 
 
 def test_the_telemetry_does_not_break_a_run_when_the_exporter_fails(client, wired, monkeypatch):
