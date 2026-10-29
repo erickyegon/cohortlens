@@ -69,3 +69,14 @@ def test_a_second_interrupt_cannot_abort_the_restore_and_a_stale_poll_cannot_ove
     assert "trap '' INT TERM" in cleanup
     assert text.count('NOW_SERVING="$(serving || true)"') >= 2  # re-read once more after the loop
     assert "grep '^run '" in text
+
+
+def test_the_bad_revision_is_routed_explicitly_because_a_restore_pins_the_traffic():
+    """After a restore the service sends 100% to a named revision, so a new revision gets 0% unless it is routed to.
+
+    The second run of the drill deployed the faulty revision, saw it serving 0% and stopped.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    deploy = text.index("--update-env-vars")
+    route = text.index('--to-revisions="${SERVICE}-${SUFFIX}=100"')
+    assert deploy < route < text.index('BAD="$(serving)"')
