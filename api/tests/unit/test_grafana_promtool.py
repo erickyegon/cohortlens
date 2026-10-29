@@ -72,6 +72,10 @@ def _need_the_engine():
 def prepare(tmp_path, replace=None):
     (tmp_path / "rules.yml").write_text(rules_yaml(replace), encoding="utf-8", newline="\n")
     shutil.copy(GRAFANA / "alert-tests.yml", tmp_path / "alert-tests.yml")
+    # the container's user is not the runner's: it must be able to read the mounted directory (pytest makes it 0700)
+    tmp_path.chmod(0o755)
+    for name in ("rules.yml", "alert-tests.yml"):
+        (tmp_path / name).chmod(0o644)
     return tmp_path
 
 
