@@ -18,13 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install ruff==0.15.7  # keep in sync with api/requirements-dev.txt
       - run: ruff check .
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -41,8 +41,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -51,7 +51,7 @@ jobs:
             api/requirements-dev.txt
       - run: pip install -r api/requirements.txt -r api/requirements-dev.txt
       # make test also runs the frontend tests (Vitest), so the job needs Node and the web dependencies
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -69,10 +69,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
       - name: Build api image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./api
           push: false
@@ -80,7 +80,7 @@ jobs:
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
       - name: Build web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./web
           push: false
@@ -92,7 +92,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Compose stack smoke test (clean start)
         run: bash scripts/smoke_compose.sh --clean
         env:

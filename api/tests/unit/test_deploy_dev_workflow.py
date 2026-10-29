@@ -13,7 +13,7 @@ def test_it_runs_on_pushes_to_main_only_and_never_on_pull_requests():
 
 
 def test_it_authenticates_with_workload_identity_federation_and_no_key_or_secret():
-    assert "id-token: write" in WORKFLOW and "google-github-actions/auth@v2" in WORKFLOW
+    assert "id-token: write" in WORKFLOW and "google-github-actions/auth@v3" in WORKFLOW
     assert "workload_identity_provider" in WORKFLOW and "GCP_DEPLOY_SA_DEV" in WORKFLOW
     assert "credentials_json" not in WORKFLOW and "secrets." not in WORKFLOW
 
