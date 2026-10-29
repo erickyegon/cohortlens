@@ -53,6 +53,22 @@ def run_promtool(directory):
                           env={**os.environ, "MSYS_NO_PATHCONV": "1"})
 
 
+def _image_available():
+    """Docker may exist without being able to pull (no network, a restricted runner): then these tests skip."""
+    if subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True).returncode == 0:
+        return True
+    try:
+        return subprocess.run(["docker", "pull", "-q", IMAGE], capture_output=True, timeout=300).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _need_the_engine():
+    if not PROMTOOL and not _image_available():
+        pytest.skip(f"promtool is not installed and the image {IMAGE} cannot be pulled")
+
+
 def prepare(tmp_path, replace=None):
     (tmp_path / "rules.yml").write_text(rules_yaml(replace), encoding="utf-8", newline="\n")
     shutil.copy(GRAFANA / "alert-tests.yml", tmp_path / "alert-tests.yml")
