@@ -23,7 +23,7 @@ At its last promotion prod served exactly the image digests dev served. The data
 
 ![Results screen for the reference cohort: final count 481, attrition waterfall, baseline](docs/img/results-desktop.png)
 
-**The alert, from the alert rule's History tab:** `CohortRunErrorRateHigh` going Normal, Pending, Alerting and back to Normal during drill S1 (it cleared as "Normal (Nodata)": once the rollback stopped the failing runs there were too few runs left to evaluate; the resolved notification reached GitHub at 14:55:53 UTC). The times in the screenshot are the owner's local time (UTC−4): the successful drill is the top episode (10:43 to 10:52 local, 14:43 to 14:52 UTC on 2026-10-29); the one below it (09:17 to 09:45 local, 13:17 to 13:45 UTC) is the first, failed attempt, where the agent refused a malformed alert.
+**The alert, from the alert rule's History tab:** `CohortRunErrorRateHigh` going Normal, Pending, Alerting and back to Normal during drill S1 (it ended as "Normal (Nodata)", that is, the query returned no value, not an observed error rate below 5%; the resolved notification reached GitHub at 14:55:53 UTC). The times in the screenshot are the owner's local time (UTC−4): the successful drill is the top episode (10:43 to 10:52 local, 14:43 to 14:52 UTC on 2026-10-29); the one below it (09:17 to 09:45 local, 13:17 to 13:45 UTC) is the first, failed attempt, where the agent refused a malformed alert.
 
 ![CohortRunErrorRateHigh history: Normal, Pending, Alerting, Normal](docs/img/alert-firing.png)
 
