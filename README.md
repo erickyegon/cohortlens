@@ -19,17 +19,27 @@ At its last promotion prod served exactly the image digests dev served. The data
 
 ### Screenshots
 
-_To be added by the owner as files in `docs/img/` (names below), then shown here._
+**The results screen** for the reference cohort: final count 481, the attrition waterfall and the start of the baseline table. Synthetic data only.
 
-| File | What it shows |
-|---|---|
-| `docs/img/results-desktop.png` | Results screen for the reference cohort: final count, attrition waterfall, baseline |
-| `docs/img/dashboard.png` | Grafana "CohortLens core journey" with data |
-| `docs/img/alert-firing.png` | `CohortRunErrorRateHigh` firing during the drill |
-| `docs/img/trace.png` | One trace in Grafana (trace id visible) |
-| `docs/img/logs.png` | The log line carrying the same trace id |
-| `docs/img/incident-78.png` | Incident #78, closed by the on-call agent |
-| `docs/img/prod-approval.png` | The production approval gate on a promotion |
+![Results screen for the reference cohort: final count 481, attrition waterfall, baseline](docs/img/results-desktop.png)
+
+**The alert, from the alert rule's History tab:** `CohortRunErrorRateHigh` going Normal, Pending, Alerting and back to Normal during drill S1 (it ended as "Normal (Nodata)", that is, the query returned no value, not an observed error rate below 5%; the resolved notification reached GitHub at 14:55:53 UTC). The times in the screenshot are the owner's local time (UTC−4): the successful drill is the top episode (10:43 to 10:52 local, 14:43 to 14:52 UTC on 2026-10-29); the one below it (09:17 to 09:45 local, 13:17 to 13:45 UTC) is the first, failed attempt, where the agent refused a malformed alert.
+
+![CohortRunErrorRateHigh history: Normal, Pending, Alerting, Normal](docs/img/alert-firing.png)
+
+**The incident the on-call agent handled and closed** ([#78](https://github.com/erickyegon/cohortlens/issues/78)): the alert opened it, the agent rolled the API back to the healthy revision and the resolved notification closed it. "Started by @erickyegon" is the account whose token starts the workflow, not a person doing the rollback (audit deviation 29).
+
+![Incident #78: opened by the workflow, rollback by the agent, closed](docs/img/incident-78.png)
+
+**The production approval gate** on the promotion of `ff96024` ([run 40957191682](https://github.com/erickyegon/cohortlens/actions/runs/40957191682)): the `production` environment pauses the run until the owner approves; the page shows the owner's approval (and that this was a re-run, which is why it says "Latest #2").
+
+![Promote to prod: the production environment approval](docs/img/prod-approval.png)
+
+**A run's log line in Grafana** (`run finished outcome=success`), with the link to the run's trace.
+
+![A cohort run's log line in Grafana Explore](docs/img/logs.png)
+
+**Still to add by the owner:** `docs/img/dashboard.png` (the "CohortLens core journey" dashboard, to be retaken after the error-rate axis fix in [#89](https://github.com/erickyegon/cohortlens/pull/89) is applied) and `docs/img/trace.png` (one trace with its trace id visible).
 
 ## Problem
 Feasibility counts for observational studies are hand-written SQL, slow to change and hard to share.
