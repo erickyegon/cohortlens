@@ -127,3 +127,20 @@ def test_a_listed_id_that_is_not_a_number_is_ignored_never_passed_to_gh(tmp_path
     _, calls, cancelled = run_script(tmp_path, [("400; echo hacked", "waiting", SHA), ("410", "waiting", SHA)])
     assert cancelled == ["410"]
     assert not any("hacked" in part for call in calls for part in call if "POST" in call)
+
+
+TITLE = "Promote to prod: " + "b" * 40 + " (Merge pull request #83 from owner/feat/x)"
+
+
+def test_it_names_the_version_each_stale_run_was_for_not_the_tip_of_main(tmp_path):
+    """A run's own head sha is main's tip when it was created, not the commit it would promote; the run name has it."""
+    result, calls, _ = run_script(tmp_path, [("400", "waiting", TITLE)])
+    assert "b" * 40 in result.stdout and "run 400" in result.stdout
+    listing = next(c for c in calls if any("promote-prod.yml/runs" in part for part in c))
+    assert "display_title" in " ".join(listing) and "head_sha" not in " ".join(listing)
+
+
+def test_a_run_without_a_version_in_its_name_is_still_cancelled_and_says_so(tmp_path):
+    old_name = "Promote to prod"  # a run from before the run name carried the commit
+    result, _, cancelled = run_script(tmp_path, [("400", "waiting", old_name)])
+    assert cancelled == ["400"] and "400" in result.stdout
