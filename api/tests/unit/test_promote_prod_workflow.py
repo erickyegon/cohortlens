@@ -116,3 +116,13 @@ def test_third_party_actions_are_the_ones_the_repository_already_uses_or_google_
 
 def test_the_otlp_endpoint_is_a_repository_variable_not_a_secret():
     assert "OTLP_ENDPOINT: ${{ vars.GCP_OTLP_ENDPOINT }}" in WORKFLOW
+
+
+def test_a_run_started_by_hand_must_name_the_commit_and_can_never_promote_unguarded():
+    """The near-miss follow-up (audit section 13): an empty version meant "whatever dev serves", unguarded."""
+    dispatch = WORKFLOW.split("workflow_dispatch:", 1)[1].split("\n\n", 1)[0]
+    assert re.search(r"required: true", dispatch) and "leave empty" not in dispatch
+    step = WORKFLOW.split("name: Promote what dev is serving", 1)[1]
+    assert 'bash infra/gcp/promote.sh --expect-version "$EXPECTED_VERSION"' in step
+    assert "else" not in step and not re.search(r"promote\.sh\s*$", step, re.MULTILINE)  # no unguarded call left
+    assert '[ -z "$EXPECTED_VERSION" ]' in step  # an empty value stops before any cloud call

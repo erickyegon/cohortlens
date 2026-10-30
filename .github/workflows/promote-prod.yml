@@ -2,7 +2,7 @@ name: Promote to prod
 
 # The run name carries the commit being promoted and what the dev deploy was for, so a stale run is recognisable in the
 # list of runs and on the approval page.
-run-name: "Promote to prod: ${{ github.event.workflow_run.head_sha || inputs.version || 'what dev serves now' }} (${{ github.event.workflow_run.display_title || 'by hand' }})"
+run-name: "Promote to prod: ${{ github.event.workflow_run.head_sha || inputs.version }} (${{ github.event.workflow_run.display_title || 'by hand' }})"
 
 # After a successful dev deploy (or by hand), this promotes what dev is serving to production. The job runs in the
 # `production` environment, so it PAUSES until the environment's required reviewer approves it in GitHub; only then does
@@ -21,8 +21,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Full 40-character commit sha you expect dev to be serving (leave empty to promote whatever dev serves now)"
-        required: false
+        description: "Full 40-character commit sha of the dev build to promote (dev must be serving exactly it, otherwise nothing is promoted)"
+        required: true
         type: string
 
 permissions:
@@ -87,8 +87,9 @@ jobs:
 
       - name: Promote what dev is serving (same digests), candidate first, then traffic
         run: |
-          if [ -n "$EXPECTED_VERSION" ]; then
-            bash infra/gcp/promote.sh --expect-version "$EXPECTED_VERSION"
-          else
-            bash infra/gcp/promote.sh
+          # a run started by hand must name the commit too, so no promotion is ever unguarded (audit section 13)
+          if [ -z "$EXPECTED_VERSION" ]; then
+            echo "error: a promotion needs the full commit sha dev is serving" >&2
+            exit 2
           fi
+          bash infra/gcp/promote.sh --expect-version "$EXPECTED_VERSION"

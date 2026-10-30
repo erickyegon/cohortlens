@@ -28,25 +28,25 @@ REPO="${GITHUB_REPOSITORY-}"; CURRENT="${GITHUB_RUN_ID-}"
 [[ "$CURRENT" =~ ^[0-9]+$ ]] || refuse "GITHUB_RUN_ID must be a number"
 
 if ! LISTING="$(gh api "repos/${REPO}/actions/workflows/promote-prod.yml/runs?status=waiting&per_page=100" \
-    --jq '.workflow_runs[] | [.id, .status, .head_sha] | @tsv')"; then
+    --jq '.workflow_runs[] | [.id, .status, .display_title] | @tsv')"; then
   echo "warning: could not list the waiting promotion runs; nothing was cancelled" >&2
   exit 0
 fi
 
 CANCELLED=() FAILED=0
-while IFS=$'\t' read -r id status sha; do
+while IFS=$'\t' read -r id status title; do  # the run name says which commit it would promote (a run's head sha is only main's tip)
   id="${id%$'\r'}"
   [ -n "$id" ] || continue
   [[ "$id" =~ ^[0-9]+$ ]] || continue            # never pass anything but a number to gh
   [ "${status%$'\r'}" = "waiting" ] || continue   # only a run paused at the approval
   (( 10#$id < 10#$CURRENT )) || continue                  # only older runs than this one
   if (( DRY )); then
-    echo "dry run: would cancel the waiting promotion run ${id} (commit ${sha:0:7})"
+    echo "dry run: would cancel the waiting promotion run ${id} (${title})"
     CANCELLED+=("$id")
     continue
   fi
   if gh api -X POST "repos/${REPO}/actions/runs/${id}/cancel" > /dev/null; then
-    echo "cancelled the stale promotion run ${id} (commit ${sha:0:7}), which was waiting for approval"
+    echo "cancelled the stale promotion run ${id} (${title}), which was waiting for approval"
     CANCELLED+=("$id")
   else
     echo "warning: could not cancel the promotion run ${id}; it stays waiting" >&2
