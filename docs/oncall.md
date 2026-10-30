@@ -49,16 +49,16 @@ up once, how to run the drill, and what is **not** built.
 
 ## Renewing the tokens (every 30 days)
 
-Two tokens were made with a 30-day life, both around 2026-10-29, so they **expire around 28 November 2026**. When they do, the agent stops answering alerts without any error in the app: the Grafana Test button or the workflow log shows HTTP 401 or 403. The Anthropic key does not expire (it has a spending limit). Never paste a token into a chat, a terminal argument or a file.
+Two tokens were made with a 30-day life, both around 2026-10-29, so they **expire around 28 November 2026**. When they do, the agent stops answering alerts without any error in the app: the Grafana Test button or the workflow log shows HTTP 401 or 403. The Anthropic key is a separate matter (the owner set a spending limit on that account; check it there). Never paste a token into a chat, a terminal argument or a file.
 
 1. **GitHub token** (`grafana-oncall-dispatch`: fine-grained, only `erickyegon/cohortlens`, **Contents: Read and write**; it lives only in Grafana):
-   1. GitHub, Settings, Developer settings, Fine-grained personal access tokens, open `grafana-oncall-dispatch`, **Regenerate token** (or make a new one with the same settings and 30 days). Copy it.
+   1. GitHub, Settings, Developer settings, Fine-grained personal access tokens, open `grafana-oncall-dispatch`, **Regenerate token** (check the new expiry date it shows) or make a new token with the same settings and 30 days. Copy it.
    2. Grafana, Alerting, Contact points, `github-oncall`, Edit, Optional Webhook settings: paste it in **Authorization Header, Credentials** (leave Scheme `Bearer` and the custom payload as they are), Save.
    3. Press **Test**: a new "On-call agent" run must appear in the Actions tab and **refuse** the test alert (exit 2). A 401 or 403 in Grafana means the token is wrong or expired.
 2. **Grafana read token** (`GRAFANA_READ_TOKEN`: a **Viewer** service account token, a GitHub repository secret):
    1. Grafana, Administration, Users and access, Service accounts, the Viewer account, **Add service account token** (30 days). Copy it.
-   2. In a terminal in the repository: `gh secret set GRAFANA_READ_TOKEN` and paste the token at the **hidden prompt** (it is not shown or kept in the shell history). Delete the old token in Grafana.
-   3. Check it with **Actions, On-call agent, Run workflow** (a simulated alert, `dry_run` true): the log must show the metric queries returning `ok`.
+   2. Set the secret either in the browser (repository **Settings, Secrets and variables, Actions, GRAFANA_READ_TOKEN, Update**) or in a terminal in the repository with `gh secret set GRAFANA_READ_TOKEN`, pasting the token at the **hidden prompt** (not shown, not kept in the shell history).
+   3. Check it with **Actions, On-call agent, Run workflow** (a simulated alert, `dry_run` true): the log must show the metric queries returning `ok`. Only then delete the old token in Grafana.
 3. Neither renewal needs a deploy or a code change. The renewals are not recorded in the repository (the tokens are secrets); note the date you did it somewhere you will find it.
 
 ## Drill S1 on dev (`make chaos SCENARIO=s1`, `chaos/s1.sh`)
