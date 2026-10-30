@@ -19,11 +19,11 @@ At its last promotion prod served exactly the image digests dev served. The data
 
 ### Screenshots
 
-**The results screen** for the reference cohort (prod): final count 481, the attrition waterfall and the start of the baseline table. Synthetic data only.
+**The results screen** for the reference cohort: final count 481, the attrition waterfall and the start of the baseline table. Synthetic data only.
 
 ![Results screen for the reference cohort: final count 481, attrition waterfall, baseline](docs/img/results-desktop.png)
 
-**The alert, from the alert rule's History tab:** `CohortRunErrorRateHigh` going Normal, Pending, Alerting and back to Normal during drill S1. The times in the screenshot are the owner's local time (UTC−4): the successful drill is the top episode (10:43 to 10:52 local, 14:43 to 14:52 UTC on 2026-10-29); the one below it (09:17 to 09:45 local, 13:17 to 13:45 UTC) is the first, failed attempt, where the agent refused a malformed alert.
+**The alert, from the alert rule's History tab:** `CohortRunErrorRateHigh` going Normal, Pending, Alerting and back to Normal during drill S1 (it cleared as "Normal (Nodata)": once the rollback stopped the failing runs there were too few runs left to evaluate; the resolved notification reached GitHub at 14:55:53 UTC). The times in the screenshot are the owner's local time (UTC−4): the successful drill is the top episode (10:43 to 10:52 local, 14:43 to 14:52 UTC on 2026-10-29); the one below it (09:17 to 09:45 local, 13:17 to 13:45 UTC) is the first, failed attempt, where the agent refused a malformed alert.
 
 ![CohortRunErrorRateHigh history: Normal, Pending, Alerting, Normal](docs/img/alert-firing.png)
 
@@ -31,7 +31,7 @@ At its last promotion prod served exactly the image digests dev served. The data
 
 ![Incident #78: opened by the workflow, rollback by the agent, closed](docs/img/incident-78.png)
 
-**The production approval gate** on the promotion of `ff96024` ([run 40957191682](https://github.com/erickyegon/cohortlens/actions/runs/40957191682)): the `production` environment waits for the owner's approval.
+**The production approval gate** on the promotion of `ff96024` ([run 40957191682](https://github.com/erickyegon/cohortlens/actions/runs/40957191682)): the `production` environment pauses the run until the owner approves; the page shows the owner's approval (and that this was a re-run, which is why it says "Latest #2").
 
 ![Promote to prod: the production environment approval](docs/img/prod-approval.png)
 
