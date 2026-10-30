@@ -13,7 +13,9 @@
 # were deployed by digest and passed the dev smoke test. It checks that both are digest-pinned images of this
 # project's registry, asks the dev API (/version) which commit it is running, and hands exactly those digests to
 # infra/gcp/deploy.sh for prod: a no-traffic candidate, a smoke test on its tagged URL, and only then traffic.
-# --expect-version is the commit the approver was shown; if dev has moved on to another commit since, it refuses.
+# --expect-version is the commit the approver was shown; if dev has moved on to another commit since, it refuses. The
+# flag is optional only for a person running the script locally: promote-prod.yml ALWAYS passes it (a by-hand run must
+# name the commit too).
 # It changes nothing in dev and deletes nothing.
 set -euo pipefail
 export LC_ALL=C

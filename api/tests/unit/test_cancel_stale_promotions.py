@@ -143,4 +143,10 @@ def test_it_names_the_version_each_stale_run_was_for_not_the_tip_of_main(tmp_pat
 def test_a_run_without_a_version_in_its_name_is_still_cancelled_and_says_so(tmp_path):
     old_name = "Promote to prod"  # a run from before the run name carried the commit
     result, _, cancelled = run_script(tmp_path, [("400", "waiting", old_name)])
-    assert cancelled == ["400"] and "400" in result.stdout
+    assert cancelled == ["400"] and "400" in result.stdout and old_name in result.stdout
+
+
+def test_a_title_with_a_tab_or_shell_characters_is_printed_as_text_and_never_run(tmp_path):
+    title = "Promote to prod: " + "c" * 40 + " (Merge\tpull request $(echo hacked) `id` ; rm -rf x)"
+    result, _, cancelled = run_script(tmp_path, [("400", "waiting", title)])
+    assert cancelled == ["400"] and "$(echo hacked)" in result.stdout and "c" * 40 in result.stdout
