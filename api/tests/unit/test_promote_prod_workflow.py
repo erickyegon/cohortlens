@@ -82,8 +82,31 @@ def test_it_builds_nothing_and_promotes_what_dev_serves_through_the_tested_scrip
 def test_untrusted_text_never_reaches_the_shell_inline():
     # the manual version input and the triggering commit go through environment variables, validated by the script
     assert "${{ inputs.version }}" not in WORKFLOW.split("run:", 1)[1] if "run:" in WORKFLOW else True
-    run_blocks = re.findall(r"run: [>|]?-?\s*\n?((?:.|\n)*?)(?=\n\s*\n|\n      - |\Z)", WORKFLOW)  # up to a blank line
-    assert not any("${{ inputs." in block or "${{ github.event." in block for block in run_blocks)
+    assert not any("${{ inputs." in block or "${{ github.event." in block for block in _run_blocks(WORKFLOW))
+
+
+def _run_blocks(text):
+    """Every `run:` command (the same line and the lines indented deeper than the `run:` key)."""
+    lines, blocks = text.splitlines(), []
+    for i, line in enumerate(lines):
+        match = re.match(r"^(\s*)(?:- )?run: ?(.*)$", line)
+        if not match:
+            continue
+        indent = len(match.group(1)) + (2 if line.lstrip().startswith("- ") else 0)
+        block = [match.group(2)]
+        for following in lines[i + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            block.append(following)
+        blocks.append("\n".join(block))
+    return blocks
+
+
+def test_the_run_block_finder_sees_every_command_including_after_a_blank_line():
+    sample = ("jobs:\n  a:\n    steps:\n      - run: echo ${{ inputs.x }}\n      - name: n\n        run: |\n"
+              "          echo ok\n\n          echo ${{ github.event.y }}\n      - uses: u@v1\n")
+    blocks = _run_blocks(sample)
+    assert len(blocks) == 2 and "${{ inputs.x }}" in blocks[0] and "${{ github.event.y }}" in blocks[1]
 
 
 def test_third_party_actions_are_the_ones_the_repository_already_uses_or_google_s_own():

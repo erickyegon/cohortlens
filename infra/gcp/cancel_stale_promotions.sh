@@ -5,7 +5,8 @@
 #   GITHUB_REPOSITORY=owner/name GITHUB_RUN_ID=<this run> GH_TOKEN=... bash infra/gcp/cancel_stale_promotions.sh [--dry-run]
 #
 # - Only runs whose status is `waiting` (paused at the `production` approval) are touched. A run that is deploying
-#   (in progress) is never cancelled: a production deploy is not cut off half way.
+#   (in progress) is not cancelled: only runs seen waiting at that moment are. (A run approved between the listing and the
+#   cancel could still be cut off; the deploy is candidate-first, so prod keeps serving the previous revision.)
 # - Only runs with a LOWER id than this one are cancelled, so two runs started together cannot cancel each other.
 # - It never fails the promotion that called it: a failure to list or to cancel is a warning.
 # The token needs `actions: write`. It builds nothing, deploys nothing and has no cloud credentials.
@@ -38,7 +39,7 @@ while IFS=$'\t' read -r id status sha; do
   [ -n "$id" ] || continue
   [[ "$id" =~ ^[0-9]+$ ]] || continue            # never pass anything but a number to gh
   [ "${status%$'\r'}" = "waiting" ] || continue   # only a run paused at the approval
-  (( id < CURRENT )) || continue                  # only older runs than this one
+  (( 10#$id < 10#$CURRENT )) || continue                  # only older runs than this one
   if (( DRY )); then
     echo "dry run: would cancel the waiting promotion run ${id} (commit ${sha:0:7})"
     CANCELLED+=("$id")

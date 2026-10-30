@@ -33,7 +33,7 @@ jobs:
   # A run that waits for approval holds a workflow-level concurrency group, so a newer run would queue behind it and a
   # stale promotion could stay approvable for hours (audit section 13). So the group is on the deploying job only, and
   # this job of every NEW run first cancels the older runs that are still waiting for approval. A run that is already
-  # deploying is never touched. It has no environment, no cloud credentials and no id-token.
+  # deploying is not touched (only runs seen waiting at that moment are cancelled). It has no environment, no cloud credentials and no id-token.
   supersede:
     name: cancel stale promotions
     runs-on: ubuntu-latest
@@ -48,6 +48,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false  # the script needs no git credentials and the token can write
       - run: bash infra/gcp/cancel_stale_promotions.sh
 
   promote:
