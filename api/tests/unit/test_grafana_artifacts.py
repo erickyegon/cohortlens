@@ -152,3 +152,14 @@ def test_the_failure_log_panel_filters_on_the_outcome_the_api_logs(dashboard):
     """runs.py logs `run finished outcome=<outcome>`; match that, not guessed words."""
     (panel,) = [item for item in dashboard["panels"] if item["type"] == "logs"]
     assert "outcome=(failed|timeout)" in panel["targets"][0]["expr"]
+
+
+def test_the_error_rate_panels_are_fractions_with_a_fixed_zero_to_one_range(dashboard):
+    """The unit was already `percentunit` (0.0 to 1.0 shown as 0% to 100%), but with no range set Grafana scaled the
+    axis of an all-zero series to 0..100, i.e. 0% to 10000%. An error rate is a fraction, so the range is fixed."""
+    panels = [item for item in dashboard["panels"] if "error rate" in item["title"].lower()]
+    assert len(panels) == 2
+    for panel in panels:
+        defaults = panel["fieldConfig"]["defaults"]
+        assert defaults["unit"] == "percentunit", panel["title"]
+        assert defaults["min"] == 0 and defaults["max"] == 1, panel["title"]
