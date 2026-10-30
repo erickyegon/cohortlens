@@ -13,7 +13,9 @@ Tells a real-world-evidence scientist, in seconds, whether enough patients exist
 
 At its last promotion prod served exactly the image digests dev served. The data is synthetic (5,724 persons); the reference cohort ends at **481** patients. Cloud Run scales to zero, so the first request after a quiet period can take a few seconds.
 
-**Demo video:** _link to be added by the owner_
+**Demo video:** not yet recorded (the link will be added here).
+
+**Heads-up for reviewers: two tokens of the on-call agent expire around 28 November 2026.** The GitHub token that lets Grafana start the agent and the Grafana token the agent reads metrics with were both made for 30 days. After that the agent stops responding to alerts, quietly; everything else keeps working. How to renew them (five minutes, no code change): [docs/oncall.md, "Renewing the tokens"](docs/oncall.md#renewing-the-tokens-every-30-days).
 
 ### Screenshots
 
