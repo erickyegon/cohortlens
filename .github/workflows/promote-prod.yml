@@ -1,5 +1,9 @@
 name: Promote to prod
 
+# The run name carries the commit being promoted and what the dev deploy was for, so a stale run is recognisable in the
+# list of runs and on the approval page.
+run-name: "Promote to prod: ${{ github.event.workflow_run.head_sha || inputs.version || 'what dev serves now' }} (${{ github.event.workflow_run.display_title || 'by hand' }})"
+
 # After a successful dev deploy (or by hand), this promotes what dev is serving to production. The job runs in the
 # `production` environment, so it PAUSES until the environment's required reviewer approves it in GitHub; only then does
 # it authenticate as the prod deploy account (which only jobs of that environment can impersonate, see setup.sh).
@@ -21,19 +25,41 @@ on:
         required: false
         type: string
 
-concurrency:
-  group: promote-prod
-  cancel-in-progress: false  # never cut a production deploy off half way; a newer waiting promotion replaces an older one
-
 permissions:
   contents: read
   id-token: write  # workload identity federation: no key files
 
 jobs:
+  # A run that waits for approval holds a workflow-level concurrency group, so a newer run would queue behind it and a
+  # stale promotion could stay approvable for hours (audit section 13). So the group is on the deploying job only, and
+  # this job of every NEW run first cancels the older runs that are still waiting for approval. A run that is already
+  # deploying is not touched (only runs seen waiting at that moment are cancelled). It has no environment, no cloud credentials and no id-token.
+  supersede:
+    name: cancel stale promotions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >-
+      github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    permissions:
+      contents: read
+      actions: write  # to cancel a run
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false  # the script needs no git credentials and the token can write
+      - run: bash infra/gcp/cancel_stale_promotions.sh
+
   promote:
     name: promote to prod
+    needs: supersede
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: promote-prod
+      cancel-in-progress: false  # never cut a production deploy off half way
     # only on main, only after a dev deploy that succeeded (or by hand), and not until the setup variables exist
     if: >-
       github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID != '' &&
